@@ -6,6 +6,22 @@ import ssl
 from urllib.parse import urlsplit
 
 
+def connect_database(dsn=None, connector=None):
+    dsn = os.environ.get('DATABASE_URL', '') if dsn is None else dsn
+    parsed = urlsplit(dsn)
+    if (parsed.scheme not in ('postgres', 'postgresql') or not parsed.hostname
+            or not parsed.hostname.endswith('.neon.tech') or not parsed.password
+            or set(parsed.password) == {'*'}):
+        raise ValueError('invalid_connection_string')
+    ca = ssl.get_default_verify_paths().cafile
+    if not ca or not Path(ca).is_file():
+        raise ValueError('trusted_ca_unavailable')
+    if connector is None:
+        import psycopg
+        connector = psycopg.connect
+    return connector(dsn, connect_timeout=10, sslmode='verify-full', sslrootcert=ca)
+
+
 def check_database(dsn=None, connector=None):
     dsn = os.environ.get('DATABASE_URL', '') if dsn is None else dsn
     report = {'configured': bool(dsn), 'connection_verified': False,
@@ -14,21 +30,9 @@ def check_database(dsn=None, connector=None):
     if not dsn:
         return {**report, 'failure': 'not_configured'}
     try:
-        parsed = urlsplit(dsn)
-        if (parsed.scheme not in ('postgres', 'postgresql') or not parsed.hostname
-                or not parsed.hostname.endswith('.neon.tech') or not parsed.password
-                or set(parsed.password) == {'*'}):
-            raise ValueError('invalid_connection_string')
-        ca = ssl.get_default_verify_paths().cafile
-        if not ca or not Path(ca).is_file():
-            raise ValueError('trusted_ca_unavailable')
-        if connector is None:
-            import psycopg
-            connector = psycopg.connect
         marker = secrets.token_hex(16)
         key = 'backend-persistence-v1'
-        options = {'connect_timeout': 10, 'sslmode': 'verify-full', 'sslrootcert': ca}
-        with connector(dsn, **options) as connection:
+        with connect_database(dsn, connector) as connection:
             report['connection_verified'] = True
             connection.execute("SET LOCAL statement_timeout = '10s'")
             connection.execute("SET LOCAL lock_timeout = '5s'")
@@ -38,7 +42,7 @@ def check_database(dsn=None, connector=None):
             connection.execute('''INSERT INTO access_test_persistence_probe (probe_key, marker)
                 VALUES (%s, %s) ON CONFLICT (probe_key) DO NOTHING''', (key, marker))
         # 独立连接读取已提交数据，区分首次写入与再次启动后仍存在的标记。
-        with connector(dsn, **options) as connection:
+        with connect_database(dsn, connector) as connection:
             connection.execute("SET LOCAL statement_timeout = '10s'")
             row = connection.execute('SELECT marker FROM access_test_persistence_probe WHERE probe_key=%s', (key,)).fetchone()
         report['write_read_verified'] = bool(row and isinstance(row[0], str))

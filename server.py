@@ -1,10 +1,10 @@
 """展示后台兼容性检查结果；无账号接口、无记录上传接口。"""
-import html
 import json
 import os
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from check_database import check_database
+import personal_service
 
 ROOT = Path(__file__).parent
 DATABASE_REPORT = {'configured': False, 'connection_verified': False, 'failure': 'check_not_run'}
@@ -12,23 +12,16 @@ DATABASE_REPORT = {'configured': False, 'connection_verified': False, 'failure':
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path not in ('/', '/health', '/runtime', '/database'):
-            self.send_error(404)
+        if self.path not in ('/health', '/runtime', '/database'):
+            personal_service.handle(self, 'GET')
             return
         path = ROOT / 'runtime_report.json'
         report = json.loads(path.read_text()) if path.exists() else {'runtime_verified': False, 'failure': 'check_not_run'}
         report['database'] = DATABASE_REPORT
-        if self.path == '/':
-            state = '后台程序启动检查通过' if report.get('runtime_verified') else '后台兼容性检查未通过'
-            database_state = '数据库读写检查通过' if DATABASE_REPORT.get('write_read_verified') else '数据库尚未通过检查'
-            persistence_state = '再次启动后已读到原有测试标记' if DATABASE_REPORT.get('restart_persistence_verified') else '尚未完成再次启动的数据保留检查'
-            page = '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>后台兼容性测试</title><body style="font:18px/1.7 system-ui;margin:2rem"><h1>' + state + '</h1><h2>' + database_state + '</h2><p>' + persistence_state + '</p><p>本页仅检查环境和随机测试标记。未接入账号登录或运动提交。</p><pre style="white-space:pre-wrap">' + html.escape(json.dumps(report, ensure_ascii=False, indent=2)) + '</pre></body></html>'
-            body = page.encode()
-            kind = 'text/html; charset=utf-8'
-        else:
-            data = {'ok': True, 'account_accessed': False} if self.path == '/health' else DATABASE_REPORT if self.path == '/database' else report
-            body = json.dumps(data).encode()
-            kind = 'application/json'
+        report['personal_test_ready'] = personal_service.READY
+        data = {'ok': True, 'personal_test_ready': personal_service.READY} if self.path == '/health' else DATABASE_REPORT if self.path == '/database' else report
+        body = json.dumps(data).encode()
+        kind = 'application/json'
         self.send_response(200)
         for key, value in {'Content-Type': kind, 'Content-Length': str(len(body)),
                            'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
@@ -40,7 +33,11 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
 
+    def do_POST(self):
+        personal_service.handle(self, 'POST')
+
 
 if __name__ == '__main__':
     DATABASE_REPORT = check_database()
+    personal_service.initialize()
     ThreadingHTTPServer(('0.0.0.0', int(os.environ.get('PORT', '8080'))), Handler).serve_forever()
