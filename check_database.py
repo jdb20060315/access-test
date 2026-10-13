@@ -27,10 +27,11 @@ def check_database(dsn=None, connector=None):
             connector = psycopg.connect
         marker = secrets.token_hex(16)
         key = 'backend-persistence-v1'
-        options = {'connect_timeout': 10, 'sslmode': 'verify-full', 'sslrootcert': ca,
-                   'options': '-c statement_timeout=10000 -c lock_timeout=5000'}
+        options = {'connect_timeout': 10, 'sslmode': 'verify-full', 'sslrootcert': ca}
         with connector(dsn, **options) as connection:
             report['connection_verified'] = True
+            connection.execute("SET LOCAL statement_timeout = '10s'")
+            connection.execute("SET LOCAL lock_timeout = '5s'")
             connection.execute('''CREATE TABLE IF NOT EXISTS access_test_persistence_probe (
                 probe_key TEXT PRIMARY KEY, marker TEXT NOT NULL,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP)''')
@@ -38,10 +39,23 @@ def check_database(dsn=None, connector=None):
                 VALUES (%s, %s) ON CONFLICT (probe_key) DO NOTHING''', (key, marker))
         # 独立连接读取已提交数据，区分首次写入与再次启动后仍存在的标记。
         with connector(dsn, **options) as connection:
+            connection.execute("SET LOCAL statement_timeout = '10s'")
             row = connection.execute('SELECT marker FROM access_test_persistence_probe WHERE probe_key=%s', (key,)).fetchone()
         report['write_read_verified'] = bool(row and isinstance(row[0], str))
         report['restart_persistence_verified'] = bool(row and row[0] != marker)
     except Exception as exc:
         # 数据库异常文本可能含 URL 或密码；只返回异常类型。
         report['failure'] = type(exc).__name__
+        message = str(exc).lower()
+        patterns = (
+            ('startup_parameters', ('unsupported startup parameter',)),
+            ('authentication', ('password authentication failed', 'authentication failed')),
+            ('tls_verification', ('certificate verify failed', 'root certificate', 'does not match host name')),
+            ('channel_binding', ('channel binding',)),
+            ('timeout', ('timeout expired', 'connection timed out')),
+            ('dns', ('could not translate host name', 'name or service not known')),
+            ('connection_refused', ('connection refused',)),
+        )
+        report['failure_category'] = next((category for category, terms in patterns
+                                           if any(term in message for term in terms)), 'other')
     return report
