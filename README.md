@@ -1,18 +1,15 @@
-# 个人手机账号检测
+# 多学校手机测试部署包
 
-此版本提供访问口令、个人账号检测、自动退出及退出核对。不生成或提交运动记录。私有环境变量未配置时不会接受账号请求。
+其他账号第一次打开网页时，会看到指南针使用提示，并填写学校所在城市、北纬、东经。提交时在服务端校验坐标，按 GPS 坐标本地近似换算后请求该账号的校园点位。不使用原账号的学校坐标；无需地图 API 密钥。指南针读数和具体学校是否适用仍须由用户自己核对。
 
-可上传的九个文件：server.py、prepare_runtime.py、check_database.py、personal_service.py、personal_store.py、personal_test.html、neko_account_check.py、requirements.txt、README.md。不要上传 __pycache__、报告、二进制或任何私有配置。
+每个人使用本人的账号，明确同意服务器处理密码和位置并提交一条 2.26 公里模拟记录。记录是否有效以手机 App 为准。用户填写的坐标不公开，只有在需要退出恢复时连同会话加密保存在 Neon。密码只参与本次内存中的操作，不保存到数据库或仓库。
 
-Render 构建命令保持：`pip install -r requirements.txt && python prepare_runtime.py`
-启动命令保持：`python server.py`。保持 Free 套餐。
+在 GitHub 仓库中用本包的全部代码文件覆盖对应旧文件，并增加 location_input.py。仓库若有旧的 school_location.json，可以留着，新版不读取它。部署使用原来的 DATABASE_URL 和 STATE_ENCRYPTION_KEY；不要更换加密密钥。ACCESS_CODE、ACCESS_EXPIRES、PERSONAL_ACCOUNT_SHA256 已不用于新版。旧个人检测记录仍保留，且不会被新入口读出。
 
-DATABASE_URL 保持不动。另需 ACCESS_CODE（至少24字符）、ACCESS_EXPIRES（Unix秒数）、PERSONAL_ACCOUNT_SHA256（允许账号的SHA256）、STATE_ENCRYPTION_KEY（Fernet密钥）。仅在 Render 控制台设置，不提交仓库。单独生成的 Render私有配置.env 不属于上传包。
+Render 构建命令：`pip install -r requirements.txt && python prepare_runtime.py`
+Render 启动命令：`python server.py`
+保持 Free 套餐；不需要另建服务。
 
-只配置自己的账号。访问口令不要分享给他人。加密密钥不能随意更换，否则未确认退出的加密会话无法恢复。
+免费实例一次只处理一个任务，忙时返回提示。每个浏览器入口只提交一次；同一账号当天（北京时间）禁止再次预约，跨天若仍有未退出会话或结果未知也禁止再次预约。任何超时或未知结果不自动重试。
 
-部署后 /health 的 personal_test_ready=true 才能进行账号检测。主页输入访问口令后显示账号表单。账号密码由 Render 上的程序处理，登录、学期查询和退出请求发往运动世界；用户需在表单中自行勾选同意。Neon 保存脱敏结果及必要的加密会话，不保存账号密码。
-
-检测前先向数据库写入单次预约，同一入口不重复检测，不自动重试。服务中断或结果不明时保留预约。进程结束不等于远端账号退出；只有旧令牌被上游明确拒绝才报告退出已确认。未确认的临时会话经独立密钥加密后保存，页面提供再次核对退出的操作。
-
-公开仓库接入需手动部署最新提交。部署成功不代表实际账号检测成功。本版本尚未接入运动提交，原服务器上的记录和防重复状态保持不动。
+部署后打开 /health，release 应为 multi-school-v3，multi_account_ready 应为 true。尚未用其他学校账号做真实提交验证。

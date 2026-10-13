@@ -1,4 +1,4 @@
-"""展示后台兼容性检查结果；无账号接口、无记录上传接口。"""
+"""同校多账号网页服务和兼容性检查。"""
 import json
 import os
 from pathlib import Path
@@ -19,7 +19,7 @@ class Handler(BaseHTTPRequestHandler):
         report = json.loads(path.read_text()) if path.exists() else {'runtime_verified': False, 'failure': 'check_not_run'}
         report['database'] = DATABASE_REPORT
         report['personal_test_ready'] = personal_service.READY
-        data = {'ok': True, 'personal_test_ready': personal_service.READY} if self.path == '/health' else DATABASE_REPORT if self.path == '/database' else report
+        data = {'ok': True, 'personal_test_ready': personal_service.READY, 'multi_account_ready': personal_service.READY, 'release': 'multi-school-v3'} if self.path == '/health' else DATABASE_REPORT if self.path == '/database' else report
         body = json.dumps(data).encode()
         kind = 'application/json'
         self.send_response(200)
