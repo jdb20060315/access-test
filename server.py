@@ -1,32 +1,38 @@
-"""仅验证浏览器访问，不接入运动账号或提交记录。"""
+"""展示后台兼容性检查结果；无账号接口、无记录上传接口。"""
+import html
 import json
 import os
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-PAGE = '''<!doctype html><html lang="zh-CN"><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>境外访问测试</title><body style="font-family:system-ui;margin:2rem;line-height:1.7">
-<h1>连接成功</h1><p>你的浏览器已打开访问测试页面。</p>
-<p>本页不登录账号，不生成或上传运动记录。</p>
-<p>请分别使用移动网络和 Wi-Fi 打开，确认是否都能访问。</p></body></html>'''.encode()
+ROOT = Path(__file__).parent
 
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path not in ('/', '/health'):
+        if self.path not in ('/', '/health', '/runtime'):
             self.send_error(404)
             return
-        health = self.path == '/health'
-        body = json.dumps({'ok': True, 'account_accessed': False}).encode() if health else PAGE
+        path = ROOT / 'runtime_report.json'
+        report = json.loads(path.read_text()) if path.exists() else {'runtime_verified': False, 'failure': 'check_not_run'}
+        if self.path == '/':
+            state = '后台程序启动检查通过' if report.get('runtime_verified') else '后台兼容性检查未通过'
+            page = '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>后台兼容性测试</title><body style="font:18px/1.7 system-ui;margin:2rem"><h1>' + state + '</h1><p>这是运行环境检查。账号登录、运动提交和持久化数据尚未接入。</p><pre style="white-space:pre-wrap">' + html.escape(json.dumps(report, ensure_ascii=False, indent=2)) + '</pre></body></html>'
+            body = page.encode()
+            kind = 'text/html; charset=utf-8'
+        else:
+            data = {'ok': True, 'account_accessed': False} if self.path == '/health' else report
+            body = json.dumps(data).encode()
+            kind = 'application/json'
         self.send_response(200)
-        self.send_header('Content-Type', 'application/json' if health else 'text/html; charset=utf-8')
-        self.send_header('Content-Length', str(len(body)))
-        self.send_header('Cache-Control', 'no-store')
-        self.send_header('X-Content-Type-Options', 'nosniff')
+        for key, value in {'Content-Type': kind, 'Content-Length': str(len(body)),
+                           'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
+                           'X-Frame-Options': 'DENY'}.items():
+            self.send_header(key, value)
         self.end_headers()
         self.wfile.write(body)
 
-    def log_message(self, format, *args):
+    def log_message(self, *args):
         pass
 
 

@@ -1,12 +1,18 @@
-# 免费境外访问测试
+# 境外后台兼容性测试
 
-此目录只含无账号数据的连通性测试。不要上传原项目、密码、证书私钥或服务器配置。
+仅检查官方固定版本 Linux 程序能否启动。不接受账号、密码，不提交记录。包校验不匹配时不会执行下载的程序。
 
-1. 注册 GitHub 和 Render 账号；如平台要求支付方式，先停止，不开通付费实例。
-2. 新建 GitHub 仓库，仅上传本目录的 server.py、README.md、requirements.txt。
-3. Render 控制台选择 New → Web Service，连接该仓库。
-4. 运行环境选 Python 3，Build Command 填 `pip install -r requirements.txt`，Start Command 填 `python server.py`。
-5. 实例类型选择 Free，Health Check Path 填 `/health`。不创建数据库、磁盘或付费资源。
-6. 部署成功后用手机直接打开生成的 HTTPS 地址，分别测试移动网络和 Wi-Fi。
+在现有 access-test 仓库上传本目录的四个文件：server.py、prepare_runtime.py、requirements.txt、README.md。
 
-本测试不需要自定义域名。免费服务休眠后的首次打开可能需要约一分钟；免费额度耗尽或账户验证也可能影响服务。尚未验证国内可达性，不代表生产部署完成。
+Render 设置：
+
+- Build Command：`python prepare_runtime.py`
+- Start Command：`python server.py`
+- 实例：保留 Free。
+- 环境变量：无需填写账号数据。
+
+采用公开仓库地址接入的服务需在 Render 点击 Manual Deploy → Deploy latest commit。
+
+部署后打开原链接，查看“后台程序启动检查通过”及 runtime_verified。检查未通过也会显示报告，便于排查。
+
+注意：现有账号会话、防重复提交记录存放在服务器文件中。Render 免费环境休眠或重启会丢失这些文件，因此本阶段不接入真实账号任务。免费 Render 数据库仅保留 30 天，也不适合作为长期状态保存方案。需要在迁移实际账号功能前确定可靠的持久化方案。
