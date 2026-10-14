@@ -1,4 +1,4 @@
-"""浏览器独立结果；每日预约和未退出会话锁防止重复提交。"""
+"""浏览器独立结果；未确认结果和未退出会话锁防止重复提交。"""
 import json
 from check_database import connect_database
 
@@ -22,12 +22,14 @@ def reserve(key, account_key, day):
             ON CONFLICT (test_key) DO UPDATE SET phase='reserved', report=EXCLUDED.report
             WHERE personal_account_check.phase='finished'
               AND personal_account_check.session_ciphertext IS NULL
-              AND personal_account_check.report->>'day' <> %s
-            RETURNING test_key""", (account_key, json.dumps({'day': day}), day)).fetchone()
+            RETURNING test_key""", (account_key, json.dumps({'day': day}))).fetchone()
         if not row:
             return False
         row = c.execute("""INSERT INTO personal_account_check (test_key, phase, report)
-            VALUES (%s, 'reserved', %s::jsonb) ON CONFLICT (test_key) DO NOTHING
+            VALUES (%s, 'reserved', %s::jsonb)
+            ON CONFLICT (test_key) DO UPDATE SET phase='reserved', report=EXCLUDED.report
+            WHERE personal_account_check.phase='finished'
+              AND personal_account_check.session_ciphertext IS NULL
             RETURNING test_key""", (key, json.dumps({'account_key': account_key, 'day': day}))).fetchone()
         if not row:
             c.rollback()
@@ -56,7 +58,11 @@ def checkpoint(key, ciphertext):
 
 
 def finish(key, report, ciphertext):
-    phase = 'unknown' if report.get('record_uploaded') is None else 'finished'
+    submitted = report.get('record_uploaded')
+    phase = ('finished' if ciphertext is None and
+             ((submitted is True and report.get('remote_logout') is True) or
+              (submitted is False and report.get('run_attempted') is False))
+             else 'unknown')
     with connect_database() as c:
         c.execute("SET LOCAL statement_timeout = '10s'")
         c.execute("""UPDATE personal_account_check SET phase=%s,

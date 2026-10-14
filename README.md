@@ -10,6 +10,6 @@ Render 构建命令：`pip install -r requirements.txt && python prepare_runtime
 Render 启动命令：`python server.py`
 保持 Free 套餐；不需要另建服务。
 
-免费实例一次只处理一个任务，忙时返回提示。每个浏览器入口只提交一次；同一账号当天（北京时间）禁止再次预约，跨天若仍有未退出会话或结果未知也禁止再次预约。任何超时或未知结果不自动重试。
+当前服务一次只处理一个提交任务，忙时返回提示。已确认完成并退出的账号可以再次提交，包括当天；仍有未退出会话或结果未知时禁止再次预约。任何超时或未知结果不自动重试。
 
-部署后打开 /health，release 应为 multi-school-v4，multi_account_ready 应为 true。尚未用其他学校账号做真实提交验证。
+部署后打开 /health，release 应为 multi-school-v5，multi_account_ready 应为 true。尚未用其他学校账号做真实提交验证。
