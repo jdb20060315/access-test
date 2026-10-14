@@ -4,6 +4,7 @@ import hashlib
 import hmac
 from http.cookies import SimpleCookie
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -97,7 +98,7 @@ def checkpoint(root, key):
     return cipher
 
 
-def execute(key, account_key, username, password, anchor):
+def execute(key, account_key, username, password, anchor, distance_km, pace_seconds):
     global ACTIVE, ACTIVE_KEY
     try:
         with tempfile.TemporaryDirectory(prefix='personal-check-') as folder:
@@ -116,7 +117,8 @@ def execute(key, account_key, username, password, anchor):
                 finally:
                     checkpoint(root, key)
 
-            report = single_run(root, username, password, runner=runner, distance_km=2.26, journal_name='browser-single-run.json')
+            report = single_run(root, username, password, runner=runner, distance_km=distance_km,
+                                pace_seconds=pace_seconds, journal_name='browser-single-run.json')
             cipher = None if report.get('remote_logout') else checkpoint(root, key)
             store.finish(key, report, cipher)
     except Exception:
@@ -229,6 +231,19 @@ def handle(handler, method):
                     or payload.get('consent') is not True):
                 raise ValueError()
             anchor = location(payload.get('city'), payload.get('latitude'), payload.get('longitude'))
+            try:
+                distance_km = float(payload.get('distance_km'))
+                cadence = float(payload.get('cadence'))
+                step_length_m = float(payload.get('step_length_m'))
+            except (TypeError, ValueError):
+                raise ValueError('invalid_running_parameters') from None
+            if (not all(math.isfinite(v) for v in (distance_km, cadence, step_length_m))
+                    or not 2 <= distance_km <= 3 or not 140 <= cadence <= 200
+                    or not 0.7 <= step_length_m <= 1.5):
+                raise ValueError('invalid_running_parameters')
+            pace_seconds = round(60000 / (cadence * step_length_m))
+            if not 150 <= pace_seconds <= 600:
+                raise ValueError('invalid_running_parameters')
             with LOCK:
                 if ACTIVE:
                     return send(handler, 409, {'failure': 'busy'})
@@ -239,14 +254,17 @@ def handle(handler, method):
                 ACTIVE = True
                 ACTIVE_KEY = key
                 try:
-                    POOL.submit(execute, key, account_key, username.strip(), password, anchor)
+                    POOL.submit(execute, key, account_key, username.strip(), password, anchor,
+                                distance_km, pace_seconds)
                 except Exception:
                     ACTIVE = False
                     ACTIVE_KEY = None
                     raise
             return send(handler, 202, {'ok': True})
         except ValueError as exc:
-            category = 'invalid_location' if str(exc) in ('invalid_city', 'invalid_coordinate', 'location_outside_supported_area') else 'account_or_consent_required'
+            category = ('invalid_location' if str(exc) in ('invalid_city', 'invalid_coordinate', 'location_outside_supported_area')
+                        else 'invalid_running_parameters' if str(exc) == 'invalid_running_parameters'
+                        else 'account_or_consent_required')
             return send(handler, 400, {'failure': category})
         except Exception:
             return send(handler, 503, {'failure': 'result_unknown_no_retry'})

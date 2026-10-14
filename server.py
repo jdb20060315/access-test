@@ -19,7 +19,7 @@ class Handler(BaseHTTPRequestHandler):
         report = json.loads(path.read_text()) if path.exists() else {'runtime_verified': False, 'failure': 'check_not_run'}
         report['database'] = DATABASE_REPORT
         report['personal_test_ready'] = personal_service.READY
-        data = {'ok': True, 'personal_test_ready': personal_service.READY, 'multi_account_ready': personal_service.READY, 'release': 'multi-school-v3'} if self.path == '/health' else DATABASE_REPORT if self.path == '/database' else report
+        data = {'ok': True, 'personal_test_ready': personal_service.READY, 'multi_account_ready': personal_service.READY, 'release': 'multi-school-v4'} if self.path == '/health' else DATABASE_REPORT if self.path == '/database' else report
         body = json.dumps(data).encode()
         kind = 'application/json'
         self.send_response(200)
