@@ -49,6 +49,24 @@ def load(key):
             'session_ciphertext': row[2]}
 
 
+def load_profile(owner):
+    with connect_database() as c:
+        c.execute("SET LOCAL statement_timeout = '10s'")
+        row = c.execute("SELECT report->>'profile_ciphertext' FROM personal_account_check WHERE test_key=%s",
+                        ('browser-profile-v1:' + owner,)).fetchone()
+    return row[0] if row else None
+
+
+def save_profile(owner, ciphertext):
+    # ponytail: 复用已有键值表；配置独立于任务预约，不改动历史记录或会话锁。
+    with connect_database() as c:
+        c.execute("SET LOCAL statement_timeout = '10s'")
+        c.execute("""INSERT INTO personal_account_check (test_key, phase, report)
+            VALUES (%s, 'profile', %s::jsonb)
+            ON CONFLICT (test_key) DO UPDATE SET report=EXCLUDED.report""",
+                  ('browser-profile-v1:' + owner, json.dumps({'profile_ciphertext': ciphertext})))
+
+
 def checkpoint(key, ciphertext):
     with connect_database() as c:
         c.execute("SET LOCAL statement_timeout = '10s'")

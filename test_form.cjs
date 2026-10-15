@@ -8,7 +8,7 @@ const vm = require('node:vm');
 const script = readFileSync(join(__dirname, 'personal_test.html'), 'utf8')
   .match(/<script>([\s\S]*?)<\/script>/)[1];
 
-async function page(response, status = { busy: false, reserved: false }) {
+async function page(response, status = { busy: false, reserved: false }, profile = { saved: false }) {
   const elements = new Map();
   const element = id => {
     if (!elements.has(id)) elements.set(id, {
@@ -29,6 +29,13 @@ async function page(response, status = { busy: false, reserved: false }) {
     },
     setInterval(callback) { poll = callback; },
     async fetch(url, options) {
+      if (url === '/api/profile') {
+        if (options?.method === 'POST') {
+          sent = JSON.parse(options.body);
+          return { ok: true, json: async () => ({ saved: !sent.forget }) };
+        }
+        return { ok: true, json: async () => profile };
+      }
       if (url === '/api/status') return {
         ok: true,
         json: async () => status,
@@ -117,4 +124,40 @@ test('unclassified login failure does not claim the password is wrong', async ()
     record_uploaded: false, failure: 'login_failed',
   } });
   assert.match(browser.element('result').textContent, /不能据此判断密码错误/);
+});
+
+test('restored settings refill fields and reuse password without exposing it', async () => {
+  const browser = await page({ status: 202, body: {} }, {}, { saved: true, fields: {
+    username: '13800000000', city: '哈尔滨市', latitude: '45.86', longitude: '126.56',
+    distance_km: '2', cadence: '160', step_length_m: '1',
+  } });
+  browser.element('password').value = '';
+  assert.equal(browser.element('latitude').value, '45.86');
+  assert.equal(browser.element('cadence').value, '160');
+  assert.equal(browser.element('password').required, false);
+  await browser.submit();
+  assert.equal(browser.sent().password, '');
+  assert.equal(browser.sent().use_saved, true);
+  browser.element('username').value = '13900000000';
+  browser.element('username').listeners.input();
+  assert.equal(browser.element('password').required, true);
+});
+
+test('saving settings is separate from submitting a record', async () => {
+  const browser = await page({});
+  browser.element('username').value = '13800000000';
+  browser.element('remember').checked = true;
+  await browser.element('saveSettings').onclick();
+  assert.equal(browser.sent().remember, true);
+  assert.equal(browser.element('password').value, '');
+  assert.match(browser.element('savedStatus').textContent, /没有提交运动记录/);
+});
+
+test('forgetting settings restores the password requirement', async () => {
+  const browser = await page({}, {}, { saved: true, fields: { username: '13800000000' } });
+  await browser.element('forgetSettings').onclick();
+  assert.equal(browser.sent().forget, true);
+  assert.equal(browser.element('password').required, true);
+  assert.equal(browser.element('remember').checked, false);
+  assert.equal(browser.element('forgetSettings').hidden, true);
 });

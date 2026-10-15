@@ -76,6 +76,9 @@ LOCK = threading.Lock()
 ACTIVE_KEYS = set()
 READY = False
 COOKIE = 'campus_test_v2'
+PROFILE_TTL = 30 * 86400
+PROFILE_FIELDS = ('username', 'password', 'city', 'latitude', 'longitude',
+                  'distance_km', 'cadence', 'step_length_m')
 
 
 def settings(require_active=True):
@@ -126,11 +129,59 @@ def send(handler, status, data, *, html=False, cookie=None):
                'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY',
                'Referrer-Policy': 'no-referrer'}
     if cookie:
-        headers['Set-Cookie'] = f'{COOKIE}={cookie}; Secure; HttpOnly; SameSite=Strict; Path=/; Max-Age=604800'
+        headers['Set-Cookie'] = f'{COOKIE}={cookie}; Secure; HttpOnly; SameSite=Strict; Path=/; Max-Age={PROFILE_TTL}'
     for name, value in headers.items():
         handler.send_header(name, value)
     handler.end_headers()
     handler.wfile.write(body)
+
+
+def load_profile(owner):
+    from cryptography.fernet import InvalidToken
+    encrypted = store.load_profile(owner)
+    if not encrypted:
+        return None
+    try:
+        saved = json.loads(settings()[3].decrypt(encrypted.encode(), ttl=PROFILE_TTL))
+        if saved.get('owner') != owner or not isinstance(saved.get('fields'), dict):
+            return None
+        return saved['fields']
+    except (InvalidToken, ValueError, TypeError, AttributeError, UnicodeError):
+        return None
+
+
+def parameters(payload, owner):
+    if payload.get('use_saved') is True:
+        saved = load_profile(owner)
+        if not saved or (payload.get('username') and payload['username'] != saved.get('username')):
+            raise ValueError('saved_settings_unavailable')
+        payload = {**saved, **{key: value for key, value in payload.items()
+                              if key != 'password' or value}}
+    username, password = payload.get('username'), payload.get('password')
+    if (not isinstance(username, str) or not isinstance(password, str)
+            or not 0 < len(password) <= 256 or not re.fullmatch(r'1[3-9][0-9]{9}', username.strip())):
+        raise ValueError('account_or_consent_required')
+    anchor = location(payload.get('city'), payload.get('latitude'), payload.get('longitude'))
+    try:
+        distance_km, cadence, step_length_m = (float(payload.get(field))
+                                             for field in ('distance_km', 'cadence', 'step_length_m'))
+    except (TypeError, ValueError):
+        raise ValueError('invalid_running_parameters') from None
+    if (not all(math.isfinite(v) for v in (distance_km, cadence, step_length_m))
+            or not 2 <= distance_km <= 3 or not 140 <= cadence <= 200
+            or not 0.7 <= step_length_m <= 1.5):
+        raise ValueError('invalid_running_parameters')
+    pace_seconds = round(60000 / (cadence * step_length_m))
+    if not 150 <= pace_seconds <= 600:
+        raise ValueError('invalid_running_parameters')
+    fields = {field: payload[field] for field in PROFILE_FIELDS}
+    fields['username'] = username.strip()
+    return fields, anchor, distance_km, pace_seconds
+
+
+def save_profile(owner, fields):
+    encrypted = settings()[3].encrypt(json.dumps({'owner': owner, 'fields': fields}).encode()).decode()
+    store.save_profile(owner, encrypted)
 
 
 def checkpoint(root, key):
@@ -225,19 +276,23 @@ def handle(handler, method):
             if not READY:
                 return send(handler, 503, '服务尚未就绪，请稍后再试。', html=True)
             csrf = session(handler)
-            token = None
-            if not csrf:
-                nonce = secrets.token_hex(16)
-                value = str(int(time.time()) + 604800) + '.' + nonce
-                token = value + '.' + sign(value)
-                csrf = hmac.new(settings()[0].encode(), ('csrf:' + nonce).encode(), hashlib.sha256).hexdigest()
+            nonce = (SimpleCookie(handler.headers.get('Cookie', ''))[COOKIE].value.split('.')[1]
+                     if csrf else secrets.token_hex(16))
+            value = str(int(time.time()) + PROFILE_TTL) + '.' + nonce
+            token = value + '.' + sign(value)
+            csrf = hmac.new(settings()[0].encode(), ('csrf:' + nonce).encode(), hashlib.sha256).hexdigest()
             page = (ROOT / 'personal_test.html').read_text(encoding='utf-8').replace('__CSRF__', csrf)
             return send(handler, 200, page, html=True, cookie=token)
-        if handler.path != '/api/status':
+        if handler.path not in ('/api/status', '/api/profile'):
             return send(handler, 404, {})
         if not session(handler):
             return send(handler, 401, {'failure': 'session_expired'})
         try:
+            if handler.path == '/api/profile':
+                saved = load_profile(session(handler))
+                return send(handler, 200, {'saved': bool(saved), 'fields': {
+                    key: value for key, value in (saved or {}).items()
+                    if key in PROFILE_FIELDS and key != 'password'}})
             key = 'browser-run-v2:' + session(handler)
             current = store.load(key)
             with LOCK:
@@ -267,27 +322,21 @@ def handle(handler, method):
     if not csrf or not secrets.compare_digest(handler.headers.get('X-CSRF-Token', ''), csrf):
         return send(handler, 403, {'failure': 'session_expired'})
     key = 'browser-run-v2:' + csrf
-    if handler.path == '/api/run':
-        username, password = payload.get('username'), payload.get('password')
+    if handler.path in ('/api/run', '/api/profile'):
         try:
-            if (not isinstance(username, str) or not isinstance(password, str)
-                    or not 0 < len(password) <= 256 or not re.fullmatch(r'1[3-9][0-9]{9}', username.strip())
-                    or payload.get('consent') is not True):
-                raise ValueError()
-            anchor = location(payload.get('city'), payload.get('latitude'), payload.get('longitude'))
-            try:
-                distance_km = float(payload.get('distance_km'))
-                cadence = float(payload.get('cadence'))
-                step_length_m = float(payload.get('step_length_m'))
-            except (TypeError, ValueError):
-                raise ValueError('invalid_running_parameters') from None
-            if (not all(math.isfinite(v) for v in (distance_km, cadence, step_length_m))
-                    or not 2 <= distance_km <= 3 or not 140 <= cadence <= 200
-                    or not 0.7 <= step_length_m <= 1.5):
-                raise ValueError('invalid_running_parameters')
-            pace_seconds = round(60000 / (cadence * step_length_m))
-            if not 150 <= pace_seconds <= 600:
-                raise ValueError('invalid_running_parameters')
+            if handler.path == '/api/profile' and payload.get('forget') is True:
+                store.save_profile(csrf, None)
+                return send(handler, 200, {'saved': False})
+            if handler.path == '/api/run' and payload.get('consent') is not True:
+                raise ValueError('account_or_consent_required')
+            if handler.path == '/api/profile' and payload.get('remember') is not True:
+                raise ValueError('remember_consent_required')
+            fields, anchor, distance_km, pace_seconds = parameters(payload, csrf)
+            username, password = fields['username'], fields['password']
+            if payload.get('remember') is True:
+                save_profile(csrf, fields)
+            if handler.path == '/api/profile':
+                return send(handler, 200, {'saved': True})
             with LOCK:
                 if key in ACTIVE_KEYS:
                     return send(handler, 409, {'failure': 'busy'})
@@ -310,6 +359,7 @@ def handle(handler, method):
         except ValueError as exc:
             category = ('invalid_location' if str(exc) in ('invalid_city', 'invalid_coordinate', 'location_outside_supported_area')
                         else 'invalid_running_parameters' if str(exc) == 'invalid_running_parameters'
+                        else str(exc) if str(exc) in ('saved_settings_unavailable', 'remember_consent_required')
                         else 'account_or_consent_required')
             return send(handler, 400, {'failure': category})
         except Exception:
