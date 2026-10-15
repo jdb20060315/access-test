@@ -1,4 +1,4 @@
-"""同校多账号网页：独立浏览器状态、每日账号预约、自动退出。"""
+"""多账号网页：独立浏览器状态、账号并发预约、自动退出。"""
 import hashlib
 import hmac
 from http.cookies import SimpleCookie
@@ -242,7 +242,7 @@ def handle(handler, method):
             current = store.load(key)
             with LOCK:
                 busy = key in ACTIVE_KEYS
-            result = {'busy': busy, 'reserved': bool(current),
+            result = {'busy': busy, 'reserved': bool(current and current['phase'] != 'finished'),
                       'report': current['report'] if current else None,
                       'logout_available': bool(current and current['session_ciphertext'])}
             send(handler, 200, result)

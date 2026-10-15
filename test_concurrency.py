@@ -15,6 +15,19 @@ from server import Handler
 
 
 class ConcurrencyTest(unittest.TestCase):
+    def test_status_allows_next_run_only_after_finished(self):
+        handler = SimpleNamespace(path='/api/status')
+        replies = []
+        with patch.object(service, 'session', return_value='same-browser'), \
+             patch.object(service.store, 'load', side_effect=[
+                 {'phase': 'finished', 'report': {'record_uploaded': True}, 'session_ciphertext': None},
+                 {'phase': 'unknown', 'report': {'record_uploaded': None}, 'session_ciphertext': 'saved'},
+             ]), \
+             patch.object(service, 'send', side_effect=lambda _h, status, body: replies.append((status, body))):
+            service.handle(handler, 'GET')
+            service.handle(handler, 'GET')
+        self.assertEqual([body['reserved'] for _, body in replies], [False, True])
+
     def test_container_memory_limit_blocks_new_tasks(self):
         def read_text(path):
             paths = {

@@ -14,4 +14,4 @@ Render 启动命令：`python server.py`
 
 如需手动限制，可设置 `MAX_ACTIVE_RUNS` 为正整数；留空或设为 `unlimited` 即不设固定人数上限。此设置仅控制单进程中的任务数，不是服务器承载人数的测量结果。资源保护和实际并发能力应在部署环境验证。
 
-部署后打开 /health，release 应为 multi-school-v6-unlimited，multi_account_ready 应为 true。尚未用其他学校账号做真实提交验证。
+部署后打开 /health，release 应为 multi-school-v7-repeat，multi_account_ready 应为 true。尚未用其他学校账号做真实提交验证。
