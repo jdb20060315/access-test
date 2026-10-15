@@ -8,7 +8,7 @@ const vm = require('node:vm');
 const script = readFileSync(join(__dirname, 'personal_test.html'), 'utf8')
   .match(/<script>([\s\S]*?)<\/script>/)[1];
 
-async function page(response) {
+async function page(response, status = { busy: false, reserved: false }) {
   const elements = new Map();
   const element = id => {
     if (!elements.has(id)) elements.set(id, {
@@ -31,7 +31,7 @@ async function page(response) {
     async fetch(url, options) {
       if (url === '/api/status') return {
         ok: true,
-        json: async () => ({ busy: false, reserved: false }),
+        json: async () => status,
       };
       assert.equal(url, '/api/run');
       sent = JSON.parse(options.body);
@@ -96,4 +96,25 @@ test('native validation explains the focused field without clearing password', a
   await browser.poll();
   assert.match(browser.element('feedback').textContent, /请填写此字段/);
   assert.equal(browser.sent(), undefined);
+});
+
+test('login result displays only recognized diagnostics and numeric codes', async () => {
+  const browser = await page({}, { busy: false, reserved: false, report: {
+    record_uploaded: false, failure: 'login_failed',
+    login_diagnostic_tags: ['captcha', 'network', 'private raw output', '__proto__'],
+    login_error_codes: [10121, 'private raw output'], http_status_codes: [403],
+  } });
+  const result = browser.element('result').textContent;
+  assert.match(result, /验证码/);
+  assert.match(result, /网络连接错误/);
+  assert.match(result, /10121/);
+  assert.match(result, /HTTP 状态：403/);
+  assert.doesNotMatch(result, /private raw output|__proto__/);
+});
+
+test('unclassified login failure does not claim the password is wrong', async () => {
+  const browser = await page({}, { report: {
+    record_uploaded: false, failure: 'login_failed',
+  } });
+  assert.match(browser.element('result').textContent, /不能据此判断密码错误/);
 });
