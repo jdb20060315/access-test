@@ -1,5 +1,4 @@
 """同校多账号网页：独立浏览器状态、每日账号预约、自动退出。"""
-from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import hmac
 from http.cookies import SimpleCookie
@@ -11,6 +10,7 @@ import re
 import secrets
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -23,10 +23,57 @@ import personal_store as store
 
 ROOT = Path(__file__).parent
 ORIGIN = os.environ.get('RENDER_EXTERNAL_URL', 'https://access-test-vpz8.onrender.com').rstrip('/')
-POOL = ThreadPoolExecutor(max_workers=1)
+def max_active_runs():
+    configured = os.environ.get('MAX_ACTIVE_RUNS', '').strip()
+    if not configured or configured.lower() == 'unlimited':
+        return None
+    value = int(configured)
+    if value < 1:
+        raise ValueError('MAX_ACTIVE_RUNS must be positive or unlimited')
+    return value
+
+
+def memory_available():
+    """Read Linux memory headroom, including a smaller container limit."""
+    try:
+        values = {}
+        for line in Path('/proc/meminfo').read_text().splitlines():
+            name, _, rest = line.partition(':')
+            if name in ('MemTotal', 'MemAvailable'):
+                values[name] = int(rest.split()[0]) * 1024
+        total, available = values['MemTotal'], values['MemAvailable']
+    except (OSError, KeyError, ValueError, IndexError):
+        return None
+    for limit_path, usage_path in (
+        ('/sys/fs/cgroup/memory.max', '/sys/fs/cgroup/memory.current'),
+        ('/sys/fs/cgroup/memory/memory.limit_in_bytes',
+         '/sys/fs/cgroup/memory/memory.usage_in_bytes'),
+    ):
+        try:
+            limit = int(Path(limit_path).read_text().strip())
+            used = int(Path(usage_path).read_text().strip())
+        except (OSError, ValueError):
+            continue
+        if 0 < limit < total:
+            total, available = limit, min(available, max(0, limit - used))
+    return total, available
+
+
+def resources_available():
+    memory = memory_available()
+    if memory is None:
+        return not sys.platform.startswith('linux')
+    total, available = memory
+    return available >= max(128 * 1024 * 1024, total // 8)
+
+
+def start_task(target, *args):
+    threading.Thread(target=target, args=args, daemon=True).start()
+
+
+MAX_ACTIVE_RUNS = max_active_runs()
 LOCK = threading.Lock()
-ACTIVE = False
-ACTIVE_KEY = None
+ACTIVE_KEYS = set()
 READY = False
 COOKIE = 'campus_test_v2'
 
@@ -99,7 +146,6 @@ def checkpoint(root, key):
 
 
 def execute(key, account_key, username, password, anchor, distance_km, pace_seconds):
-    global ACTIVE, ACTIVE_KEY
     try:
         with tempfile.TemporaryDirectory(prefix='personal-check-') as folder:
             root = Path(folder)
@@ -133,12 +179,10 @@ def execute(key, account_key, username, password, anchor, distance_km, pace_seco
     finally:
         password = None
         with LOCK:
-            ACTIVE = False
-            ACTIVE_KEY = None
+            ACTIVE_KEYS.discard(key)
 
 
 def revoke(key):
-    global ACTIVE, ACTIVE_KEY
     try:
         current = store.load(key)
         if not current or not current['session_ciphertext']:
@@ -170,14 +214,12 @@ def revoke(key):
         pass
     finally:
         with LOCK:
-            ACTIVE = False
-            ACTIVE_KEY = None
+            ACTIVE_KEYS.discard(key)
 
 
 
 
 def handle(handler, method):
-    global ACTIVE, ACTIVE_KEY
     if method == 'GET':
         if handler.path == '/':
             if not READY:
@@ -198,7 +240,9 @@ def handle(handler, method):
         try:
             key = 'browser-run-v2:' + session(handler)
             current = store.load(key)
-            result = {'busy': ACTIVE and ACTIVE_KEY == key, 'reserved': bool(current),
+            with LOCK:
+                busy = key in ACTIVE_KEYS
+            result = {'busy': busy, 'reserved': bool(current),
                       'report': current['report'] if current else None,
                       'logout_available': bool(current and current['session_ciphertext'])}
             send(handler, 200, result)
@@ -245,20 +289,22 @@ def handle(handler, method):
             if not 150 <= pace_seconds <= 600:
                 raise ValueError('invalid_running_parameters')
             with LOCK:
-                if ACTIVE:
+                if key in ACTIVE_KEYS:
                     return send(handler, 409, {'failure': 'busy'})
+                if (MAX_ACTIVE_RUNS is not None and len(ACTIVE_KEYS) >= MAX_ACTIVE_RUNS) or not resources_available():
+                    return send(handler, 503, {'failure': 'capacity_unavailable'})
                 account_key = 'account-run-v2:' + scope('account:' + username.strip())
                 day = datetime.now(timezone(timedelta(hours=8))).date().isoformat()
                 if not store.reserve(key, account_key, day):
                     return send(handler, 409, {'failure': 'already_reserved'})
-                ACTIVE = True
-                ACTIVE_KEY = key
+                ACTIVE_KEYS.add(key)
                 try:
-                    POOL.submit(execute, key, account_key, username.strip(), password, anchor,
-                                distance_km, pace_seconds)
+                    start_task(execute, key, account_key, username.strip(), password, anchor,
+                               distance_km, pace_seconds)
                 except Exception:
-                    ACTIVE = False
-                    ACTIVE_KEY = None
+                    ACTIVE_KEYS.discard(key)
+                    store.finish(key, {'ok': False, 'record_uploaded': False,
+                                       'run_attempted': False}, None)
                     raise
             return send(handler, 202, {'ok': True})
         except ValueError as exc:
@@ -270,15 +316,15 @@ def handle(handler, method):
             return send(handler, 503, {'failure': 'result_unknown_no_retry'})
     if handler.path == '/api/logout':
         with LOCK:
-            if ACTIVE:
+            if key in ACTIVE_KEYS:
                 return send(handler, 409, {'failure': 'busy'})
-            ACTIVE = True
+            if (MAX_ACTIVE_RUNS is not None and len(ACTIVE_KEYS) >= MAX_ACTIVE_RUNS) or not resources_available():
+                return send(handler, 503, {'failure': 'capacity_unavailable'})
+            ACTIVE_KEYS.add(key)
             try:
-                ACTIVE_KEY = key
-                POOL.submit(revoke, key)
+                start_task(revoke, key)
             except Exception:
-                ACTIVE = False
-                ACTIVE_KEY = None
+                ACTIVE_KEYS.discard(key)
                 return send(handler, 503, {'failure': 'logout_unavailable'})
         return send(handler, 202, {'ok': True})
     return send(handler, 404, {})

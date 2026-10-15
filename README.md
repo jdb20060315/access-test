@@ -10,6 +10,8 @@ Render 构建命令：`pip install -r requirements.txt && python prepare_runtime
 Render 启动命令：`python server.py`
 保持 Free 套餐；不需要另建服务。
 
-当前服务一次只处理一个提交任务，忙时返回提示。已确认完成并退出的账号可以再次提交，包括当天；仍有未退出会话或结果未知时禁止再次预约。任何超时或未知结果不自动重试。
+当前服务默认不设固定的同时运行人数上限；服务器可用内存低于总内存的八分之一或 128 MiB（取较大值）时拒绝新任务。已确认完成并退出的账号可以再次提交，包括当天；仍有未退出会话或结果未知时禁止再次预约。任何超时或未知结果不自动重试。
 
-部署后打开 /health，release 应为 multi-school-v5，multi_account_ready 应为 true。尚未用其他学校账号做真实提交验证。
+如需手动限制，可设置 `MAX_ACTIVE_RUNS` 为正整数；留空或设为 `unlimited` 即不设固定人数上限。此设置仅控制单进程中的任务数，不是服务器承载人数的测量结果。资源保护和实际并发能力应在部署环境验证。
+
+部署后打开 /health，release 应为 multi-school-v6-unlimited，multi_account_ready 应为 true。尚未用其他学校账号做真实提交验证。
