@@ -32,6 +32,26 @@ class DiagnosticsTest(unittest.TestCase):
         result = login_diagnostics("[gee] checkGeeUse data=true（跳过 GT4）\nHTTP 567: captcha")
         self.assertEqual(result, {"progress": [], "http_failures": [{"stage": "unknown", "status": 567}]})
 
+    def test_response_formats_do_not_expose_html_json_or_credentials(self):
+        for body, expected in (
+            ('<!DOCTYPE html><html>private-token</html>', 'html'),
+            ('<HTML lang="en">private-token', 'html'),
+            ('{"token":"private-token","account":"private-user"}', 'json'),
+            ('[{"password":"private-password"}]', 'json'),
+        ):
+            with self.subTest(body=body):
+                result = login_diagnostics('[gee] checkGeeUse 失败（HTTP 567: ' + body + '），按需验证码处理')
+                self.assertEqual(result['http_failures'], [
+                    {'stage': 'gee_check', 'status': 567, 'response_kind': expected},
+                ])
+                self.assertNotIn('private', json.dumps(result))
+
+    def test_truncated_and_plain_responses_are_not_guessed(self):
+        for body in ('{"token":"private', 'private-token <html>', 'captcha access denied', ''):
+            with self.subTest(body=body):
+                result = login_diagnostics('HTTP 567: ' + body)
+                self.assertEqual(result['http_failures'], [{'stage': 'unknown', 'status': 567}])
+
     def test_fixed_progress_and_output_limit_exclude_raw_data(self):
         output = (
             "[login] GT4 通过 lot_number=private-value\n"

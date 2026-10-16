@@ -33,7 +33,7 @@ def login_diagnostics(output):
         for label, marker in markers:
             if line.startswith(marker) and label not in progress:
                 progress.append(label)
-        codes = re.findall(r"\bHTTP\s+(\d{3})\b", line)
+        codes = list(re.finditer(r"\bHTTP\s+(\d{3})\b", line))
         if not codes:
             continue
         source = "unknown"
@@ -43,8 +43,19 @@ def login_diagnostics(output):
             source = "captcha"
         elif "GT4 连续 3 次失败:" in line:
             source = "captcha"
-        for code in codes:
-            event = {"stage": source, "status": int(code)}
+        for match in codes:
+            event = {"stage": source, "status": int(match.group(1))}
+            # ponytail: 只识别明确格式；截断或未知正文不猜测厂商和拦截原因。
+            body = line[match.end():].lstrip(": ")
+            if re.match(r"<(?:!doctype\s+html\b|html\b|head\b|body\b)", body, re.I):
+                event["response_kind"] = "html"
+            elif body.startswith(("{", "[")):
+                try:
+                    value, _ = json.JSONDecoder().raw_decode(body)
+                    if isinstance(value, (dict, list)):
+                        event["response_kind"] = "json"
+                except ValueError:
+                    pass
             if event not in failures and len(failures) < 10:
                 failures.append(event)
     return {"progress": progress, "http_failures": failures}
