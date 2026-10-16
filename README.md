@@ -25,3 +25,14 @@ Render 启动命令：`python server.py`
 新增 POST /api/diagnose，沿用原浏览器 Cookie、CSRF、Origin、本人 consent 和账号预约锁，可用 use_saved=true 复用已存配置。该入口只调用既有登录、学期查询和退出核对，不执行运动提交。未确认退出时仍保留加密会话和账号锁。固定设备身份及所有上游验证流程保持原样。
 
 login_diagnostics 只报告已观察到的固定日志阶段和 HTTP 数字状态码；独立区分免验证条件查询与验证码流程中的 HTTP 失败，无法定位的错误仍标记 unknown。v9 实测观察到第三方验证码流程通过、业务请求 HTTP 567；这不证明 App 后端验证码校验通过，也不能认定密码错误。v10 已上线，进一步观察到两次 567 都返回 HTML。格式未知、截断或其他正文不猜测。不会保存原始日志、响应正文、URL、密码或 Token，也不根据格式认定具体厂商或拦截原因。现有 captcha 关键词分类继续保留兼容，不能单凭它确定根因。
+
+## VPS 执行中继（v12）
+
+Render 出口登录运动世界持续被上游边缘安全拦截（HTTP 567 HTML，10/13 起每次均有记录）；国内 VPS 同一代码 10/13 登录、上传受理、退出核对全部成功，用户当时在手机 App 看到进度增加。v12 起支持把单次任务转发到 VPS 执行，页面、预约锁、报告结构均不变。
+
+- 环境变量 `RUNNER_MODE`：`local`（默认，现状不变）或 `ssh`。只有 `ssh` 且下列四项齐备才走中继，缺任何一项任务按结果未知处理，不自动重试。
+- `SPORT_RELAY_HOST`（如 103.236.93.62）、`SPORT_RELAY_PORT`（35877）、`SPORT_RELAY_USER`（sportrelay）、`SPORT_RELAY_SSH_KEY`（专用 ed25519 私钥 PEM）、`SPORT_RELAY_HOSTKEY`（VPS ed25519 宿主机公钥行，固定信任，不匹配即失败）、`SPORT_RELAY_SHARED_TOKEN`（与 VPS /opt/sport-relay/token 一致）。
+- VPS 侧部署在 `/opt/sport-relay`（relay.py + 原作者 v0.3.0 二进制，SHA-256 cc75af3d…，与 10/13 成功运行所用逐字节一致），以专用户 `sportrelay` 运行；authorized_keys 强制命令 + 共享令牌双重校验；凭据只在内存，不写日志、不回显二进制输出。
+- 未确认退出的会话状态由共享令牌派生密钥加密后保存在 VPS `/opt/sport-relay/state/`（0700/0600），供事后"退出云端账号"核对；确认退出即删除，超过 7 天自动清理。Render 侧加密会话仍按原逻辑保存 Neon。
+- 限频、预约锁、报告脱敏语义与本地模式相同；`/api/diagnose` 同样经中继执行。部署后 /health 应显示 release=multi-school-v12-vps-relay、runner_mode=ssh。
+- 本地检查增加 `python -m unittest test_runner_remote`（假 SSH 通道，不连 VPS 或运动世界）。中继已完成的部署验收：有效 ping、错误令牌拒绝、超长载荷拒绝、强制命令锁死（shell 命令不可达）、二进制以 sportrelay 可执行、状态加密往返。

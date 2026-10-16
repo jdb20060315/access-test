@@ -64,6 +64,8 @@ def start_task(target, *args):
 
 # 本轮故障对照临时固定为单任务，旧环境变量不覆盖；恢复并发需另行发布。
 MAX_ACTIVE_RUNS = 1
+# 执行器位置：local=Render 本机二进制（现状）；ssh=转发国内 VPS 的 sport-relay。
+RUNNER_MODE = os.environ.get('RUNNER_MODE', 'local').strip().lower() or 'local'
 LOCK = threading.Lock()
 ACTIVE_KEYS = set()
 READY = False
@@ -90,8 +92,9 @@ def initialize():
         settings()
         store.schema()
         runtime = json.loads((ROOT / 'runtime_report.json').read_text())
+        binary_ready = (ROOT / 'nekosportsworldtool').is_file()
         READY = bool(runtime.get('runtime_verified') and runtime.get('sha256_verified')
-                     and (ROOT / 'nekosportsworldtool').is_file())
+                     and (binary_ready or RUNNER_MODE == 'ssh'))
     except Exception:
         READY = False
 
@@ -190,14 +193,27 @@ def checkpoint(root, key):
 
 def execute(key, account_key, username, password, anchor, distance_km, pace_seconds, diagnose_only=False):
     try:
+        identity = anchor.copy()
+        identity['device_id'] = str(uuid.UUID(scope('device:' + account_key)[:32])).upper()
+        identity['app_install_time'] = 1_760_000_000_000
+        identity['mac_address'] = '02:' + ':'.join(scope('mac:' + account_key)[i:i+2] for i in range(0,10,2))
+        if RUNNER_MODE == 'ssh':
+            from runner_remote import run_job
+            result = run_job({'op': 'run', 'job_key': key.split(':', 1)[1], 'username': username,
+                              'password': password, 'anchor': anchor, 'identity': identity,
+                              'distance_km': distance_km, 'pace_seconds': pace_seconds,
+                              'diagnose_only': diagnose_only}, timeout=480)
+            report = result['report']
+            cipher = None
+            if not report.get('remote_logout') and result.get('session_state'):
+                cipher = settings(require_active=False)[3].encrypt(
+                    json.dumps(result['session_state']).encode()).decode()
+            store.finish(key, report, cipher)
+            return
         with tempfile.TemporaryDirectory(prefix='personal-check-') as folder:
             root = Path(folder)
             shutil.copyfile(ROOT / 'nekosportsworldtool', root / 'nekosportsworldtool')
             (root / 'nekosportsworldtool').chmod(0o700)
-            identity = anchor.copy()
-            identity['device_id'] = str(uuid.UUID(scope('device:' + account_key)[:32])).upper()
-            identity['app_install_time'] = 1_760_000_000_000
-            identity['mac_address'] = '02:' + ':'.join(scope('mac:' + account_key)[i:i+2] for i in range(0,10,2))
             (root / 'identity.json').write_text(json.dumps(identity), encoding='utf-8')
 
             def runner(args, **kwargs):
@@ -232,7 +248,25 @@ def execute(key, account_key, username, password, anchor, distance_km, pace_seco
 def revoke(key):
     try:
         current = store.load(key)
-        if not current or not current['session_ciphertext']:
+        if not current or (not current['session_ciphertext'] and RUNNER_MODE != 'ssh'):
+            return
+        if RUNNER_MODE == 'ssh':
+            from runner_remote import run_job
+            saved_state = None
+            if current['session_ciphertext']:
+                saved_state = json.loads(settings(require_active=False)[3]
+                                         .decrypt(current['session_ciphertext'].encode()))
+            result = run_job({'op': 'logout', 'job_key': key.split(':', 1)[1],
+                              'session_state': saved_state}, timeout=150)
+            if not result.get('found'):
+                return
+            rejected = result.get('remote_logout') is True
+            report = current['report'] or {'record_uploaded': False}
+            report['remote_logout'] = rejected
+            report['session_retained'] = not rejected
+            store.finish(key, report, None if rejected else current['session_ciphertext'])
+            return
+        if not current['session_ciphertext']:
             return
         with tempfile.TemporaryDirectory(prefix='personal-logout-') as folder:
             root = Path(folder)
@@ -295,7 +329,7 @@ def handle(handler, method):
                 busy = key in ACTIVE_KEYS
             result = {'busy': busy, 'reserved': bool(current and current['phase'] != 'finished'),
                       'report': current['report'] if current else None,
-                      'logout_available': bool(current and current['session_ciphertext'])}
+                      'logout_available': bool(current and (current['session_ciphertext'] or RUNNER_MODE == 'ssh'))}
             send(handler, 200, result)
         except Exception:
             send(handler, 503, {'failure': 'database_unavailable'})
