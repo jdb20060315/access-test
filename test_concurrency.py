@@ -15,6 +15,49 @@ from server import Handler
 
 
 class ConcurrencyTest(unittest.TestCase):
+    def test_serial_limit_blocks_other_operations_until_slot_is_released(self):
+        def request(csrf, path):
+            payload = json.dumps({
+                'username': '13800000000', 'password': 'test-only', 'consent': True,
+                'city': 'test', 'latitude': '1', 'longitude': '1',
+                'distance_km': '2.26', 'cadence': '160', 'step_length_m': '1',
+            }).encode()
+            return SimpleNamespace(
+                path=path, csrf=csrf,
+                headers={'Origin': service.ORIGIN, 'Content-Length': str(len(payload)),
+                         'X-CSRF-Token': csrf},
+                connection=SimpleNamespace(settimeout=lambda _: None),
+                rfile=io.BytesIO(payload),
+            )
+
+        self.assertEqual(service.MAX_ACTIVE_RUNS, 1)
+        replies = []
+        service.ACTIVE_KEYS.clear()
+        try:
+            with patch.object(service, 'READY', True), \
+                 patch.object(service, 'session', side_effect=lambda handler: handler.csrf), \
+                 patch.object(service, 'settings', return_value=('test-secret', None, None, None)), \
+                 patch.object(service, 'location', return_value={}), \
+                 patch.object(service.store, 'reserve', return_value=True) as reserve, \
+                 patch.object(service, 'resources_available', return_value=True), \
+                 patch.object(service, 'start_task') as start, \
+                 patch.object(service, 'send', side_effect=lambda _h, status, body: replies.append((status, body))):
+                service.handle(request('first', '/api/diagnose'), 'POST')
+                for path in ('/api/run', '/api/diagnose', '/api/logout'):
+                    service.handle(request('second', path), 'POST')
+                self.assertEqual([status for status, _ in replies], [202, 503, 503, 503])
+                self.assertEqual(reserve.call_count, 1)
+                self.assertEqual(start.call_count, 1)
+                # 模拟 worker 的 finally 释放槽位；下一浏览器可以继续诊断。
+                with service.LOCK:
+                    service.ACTIVE_KEYS.discard('browser-run-v2:first')
+                service.handle(request('second', '/api/diagnose'), 'POST')
+                self.assertEqual(replies[-1][0], 202)
+                self.assertEqual(reserve.call_count, 2)
+                self.assertEqual(start.call_count, 2)
+        finally:
+            service.ACTIVE_KEYS.clear()
+
     def test_status_allows_next_run_only_after_finished(self):
         handler = SimpleNamespace(path='/api/status')
         replies = []

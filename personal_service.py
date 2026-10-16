@@ -24,16 +24,6 @@ import personal_store as store
 
 ROOT = Path(__file__).parent
 ORIGIN = os.environ.get('RENDER_EXTERNAL_URL', 'https://access-test-vpz8.onrender.com').rstrip('/')
-def max_active_runs():
-    configured = os.environ.get('MAX_ACTIVE_RUNS', '').strip()
-    if not configured or configured.lower() == 'unlimited':
-        return None
-    value = int(configured)
-    if value < 1:
-        raise ValueError('MAX_ACTIVE_RUNS must be positive or unlimited')
-    return value
-
-
 def memory_available():
     """Read Linux memory headroom, including a smaller container limit."""
     try:
@@ -72,7 +62,8 @@ def start_task(target, *args):
     threading.Thread(target=target, args=args, daemon=True).start()
 
 
-MAX_ACTIVE_RUNS = max_active_runs()
+# 本轮故障对照临时固定为单任务，旧环境变量不覆盖；恢复并发需另行发布。
+MAX_ACTIVE_RUNS = 1
 LOCK = threading.Lock()
 ACTIVE_KEYS = set()
 READY = False
