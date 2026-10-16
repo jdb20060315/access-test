@@ -18,6 +18,7 @@ import uuid
 from datetime import datetime, timezone, timedelta
 
 from neko_single_run_check import single_run
+from neko_account_check import check as check_account
 from location_input import location
 import personal_store as store
 
@@ -196,7 +197,7 @@ def checkpoint(root, key):
     return cipher
 
 
-def execute(key, account_key, username, password, anchor, distance_km, pace_seconds):
+def execute(key, account_key, username, password, anchor, distance_km, pace_seconds, diagnose_only=False):
     try:
         with tempfile.TemporaryDirectory(prefix='personal-check-') as folder:
             root = Path(folder)
@@ -214,8 +215,12 @@ def execute(key, account_key, username, password, anchor, distance_km, pace_seco
                 finally:
                     checkpoint(root, key)
 
-            report = single_run(root, username, password, runner=runner, distance_km=distance_km,
-                                pace_seconds=pace_seconds, journal_name='browser-single-run.json')
+            if diagnose_only:
+                report = check_account(root, username, password, runner=runner)
+                report.update(operation='login_diagnosis', run_attempted=False, record_uploaded=False)
+            else:
+                report = single_run(root, username, password, runner=runner, distance_km=distance_km,
+                                    pace_seconds=pace_seconds, journal_name='browser-single-run.json')
             cipher = None if report.get('remote_logout') else checkpoint(root, key)
             store.finish(key, report, cipher)
     except Exception:
@@ -322,12 +327,12 @@ def handle(handler, method):
     if not csrf or not secrets.compare_digest(handler.headers.get('X-CSRF-Token', ''), csrf):
         return send(handler, 403, {'failure': 'session_expired'})
     key = 'browser-run-v2:' + csrf
-    if handler.path in ('/api/run', '/api/profile'):
+    if handler.path in ('/api/run', '/api/profile', '/api/diagnose'):
         try:
             if handler.path == '/api/profile' and payload.get('forget') is True:
                 store.save_profile(csrf, None)
                 return send(handler, 200, {'saved': False})
-            if handler.path == '/api/run' and payload.get('consent') is not True:
+            if handler.path in ('/api/run', '/api/diagnose') and payload.get('consent') is not True:
                 raise ValueError('account_or_consent_required')
             if handler.path == '/api/profile' and payload.get('remember') is not True:
                 raise ValueError('remember_consent_required')
@@ -348,8 +353,10 @@ def handle(handler, method):
                     return send(handler, 409, {'failure': 'already_reserved'})
                 ACTIVE_KEYS.add(key)
                 try:
-                    start_task(execute, key, account_key, username.strip(), password, anchor,
-                               distance_km, pace_seconds)
+                    task_args = (key, account_key, username.strip(), password, anchor, distance_km, pace_seconds)
+                    if handler.path == '/api/diagnose':
+                        task_args += (True,)
+                    start_task(execute, *task_args)
                 except Exception:
                     ACTIVE_KEYS.discard(key)
                     store.finish(key, {'ok': False, 'record_uploaded': False,

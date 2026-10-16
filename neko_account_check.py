@@ -17,6 +17,39 @@ def run_arguments(distance_km=2, pace_seconds=390):
     return ['run', '--dist', str(distance_km), '--pace', str(pace_seconds)]
 
 
+def login_diagnostics(output):
+    """只保留固定阶段和状态码，不复制响应正文、URL 或凭据。"""
+    progress = []
+    failures = []
+    markers = (
+        ("check_failed", "[gee] checkGeeUse 失败"),
+        ("captcha_started", "[login] 开始 GT4 滑块验证"),
+        ("captcha_passed", "[login] GT4 通过"),
+        ("validation_passed", "[geevalidate] 验证通过"),
+        ("direct_login", "[login] 免验证码路径：直接登录"),
+    )
+    for line in output.splitlines():
+        line = line.strip()
+        for label, marker in markers:
+            if line.startswith(marker) and label not in progress:
+                progress.append(label)
+        codes = re.findall(r"\bHTTP\s+(\d{3})\b", line)
+        if not codes:
+            continue
+        source = "unknown"
+        if line.startswith("[gee] checkGeeUse 失败"):
+            source = "gee_check"
+        elif re.match(r"^(?:×\s*)?\[gt4\]\s*第\s*\d+\s*次失败:", line):
+            source = "captcha"
+        elif "GT4 连续 3 次失败:" in line:
+            source = "captcha"
+        for code in codes:
+            event = {"stage": source, "status": int(code)}
+            if event not in failures and len(failures) < 10:
+                failures.append(event)
+    return {"progress": progress, "http_failures": failures}
+
+
 def check(root, username, password, runner=subprocess.run):
     root = Path(root)
     binary = root / 'nekosportsworldtool'
@@ -57,6 +90,7 @@ def check(root, username, password, runner=subprocess.run):
         else:
             report['failure'] = 'login_failed'
             diagnostic = result.stdout + '\n' + result.stderr
+            report['login_diagnostics'] = login_diagnostics(diagnostic)
             report['login_error_codes'] = sorted(set(int(value) for value in re.findall(
                 r'\b(?:error|err|code)\s*[=:]\s*(-?\d+)\b', diagnostic, re.I)))[:10]
             report['http_status_codes'] = sorted(set(int(value) for value in re.findall(

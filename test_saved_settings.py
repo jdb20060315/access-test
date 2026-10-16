@@ -94,6 +94,24 @@ class SavedSettingsTest(unittest.TestCase):
         finally:
             service.ACTIVE_KEYS.clear()
 
+    def test_diagnosis_uses_saved_account_and_keeps_reservation_guards(self):
+        service.save_profile('browser-a', self.fields)
+        service.ACTIVE_KEYS.clear()
+        try:
+            with patch.object(service, 'resources_available', return_value=True), \
+                 patch.object(store, 'reserve', return_value=True) as reserve, \
+                 patch.object(service, 'start_task') as start:
+                self.assertEqual(self.request('/api/diagnose', {'use_saved': True})[0], 400)
+                self.assertEqual(self.request('/api/diagnose', {'use_saved': True, 'consent': True})[0], 202)
+                self.assertIs(start.call_args.args[-1], True)
+                self.assertEqual(start.call_count, 1)
+                service.ACTIVE_KEYS.clear()
+                reserve.return_value = False
+                self.assertEqual(self.request('/api/diagnose', {'use_saved': True, 'consent': True})[0], 409)
+                self.assertEqual(start.call_count, 1)
+        finally:
+            service.ACTIVE_KEYS.clear()
+
     def test_save_does_not_start_or_reserve_a_run(self):
         with patch.object(service, 'start_task') as start, patch.object(store, 'reserve') as reserve:
             self.assertEqual(self.request('/api/profile', {**self.fields, 'remember': True})[0], 200)

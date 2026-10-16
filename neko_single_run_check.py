@@ -80,7 +80,7 @@ def single_run(root, username, password, runner=subprocess.run, distance_km=2, p
     result['login_ok'] = account['login_ok']
     result['remote_logout'] = account['remote_logout']
     result['session_retained'] = account['session_retained']
-    for field in ('login_error_codes', 'http_status_codes', 'login_diagnostic_tags', 'logout_failure'):
+    for field in ('login_error_codes', 'http_status_codes', 'login_diagnostic_tags', 'login_diagnostics', 'logout_failure'):
         if field in account:
             result[field] = account[field]
     if not result['run_attempted']:

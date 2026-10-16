@@ -16,6 +16,12 @@ Render 启动命令：`python server.py`
 
 如需手动限制，可设置 `MAX_ACTIVE_RUNS` 为正整数；留空或设为 `unlimited` 即不设固定人数上限。此设置仅控制单进程中的任务数，不是服务器承载人数的测量结果。资源保护和实际并发能力应在部署环境验证。
 
-部署后打开 /health，release 应为 multi-school-v8-saved-settings，multi_account_ready 应为 true。已完成 24 项本地检查；部署状态以线上健康检查和配置保存验收为准。既有账号的 already_reserved 状态未改动，尚未验证新增记录能在官方 App 显示。
+部署后打开 /health，release 应为 multi-school-v9-login-diagnostics，multi_account_ready 应为 true。已完成 31 项本地检查；部署状态以线上健康检查和配置保存验收为准。既有账号的 already_reserved 状态未改动，尚未验证新增记录能在官方 App 显示。
 
-本地检查：`python -m unittest -v test_saved_settings test_concurrency` 与 `node --test test_form.cjs`。保存检查采用真实 Fernet 加密和本地 SQLite 独立连接（仅对 SQL 占位符及 JSONB 类型标记做测试适配），不连接生产数据库，不登录或提交第三方平台。实现依据：[Fernet 文档](https://cryptography.io/en/50.0.0/fernet/)、[Cookie 属性](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Set-Cookie)。用户偏好是复用已确认的账号、密码、位置和参数，仅在有可核实的记录成功及退出结果后提醒去 App 查看；未知结果不自动重交。
+本地检查：`python -m unittest -v test_login_diagnostics test_saved_settings test_concurrency` 与 `node --test test_form.cjs`。保存检查采用真实 Fernet 加密和本地 SQLite 独立连接（仅对 SQL 占位符及 JSONB 类型标记做测试适配），不连接生产数据库，不登录或提交第三方平台。实现依据：[Fernet 文档](https://cryptography.io/en/50.0.0/fernet/)、[Cookie 属性](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Set-Cookie)。用户偏好是复用已确认的账号、密码、位置和参数，仅在有可核实的记录成功及退出结果后提醒去 App 查看；未知结果不自动重交。
+
+## 登录阶段诊断（候选更新，尚未上线）
+
+新增 POST /api/diagnose，沿用原浏览器 Cookie、CSRF、Origin、本人 consent 和账号预约锁，可用 use_saved=true 复用已存配置。该入口只调用既有登录、学期查询和退出核对，不执行运动提交。未确认退出时仍保留加密会话和账号锁。固定设备身份及所有上游验证流程保持原样。
+
+login_diagnostics 只报告已观察到的固定日志阶段和 HTTP 数字状态码；独立区分免验证条件查询与验证码流程中的 HTTP 失败，无法定位的错误仍标记 unknown。不会保存原始日志、响应正文、URL、密码或 Token。现有 captcha 关键词分类继续保留兼容，不能单凭它确定根因；诊断版本尚需真实环境验收。
