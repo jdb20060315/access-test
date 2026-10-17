@@ -138,7 +138,9 @@ def send(handler, status, data, *, html=False, cookie=None):
                'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY',
                'Referrer-Policy': 'no-referrer'}
     if cookie:
-        headers['Set-Cookie'] = f'{COOKIE}={cookie}; Secure; HttpOnly; SameSite=Strict; Path=/; Max-Age={PROFILE_TTL}'
+        proto = (handler.headers.get('X-Forwarded-Proto') or 'https').lower()
+        secure_flag = '; Secure' if proto == 'https' else ''
+        headers['Set-Cookie'] = f'{COOKIE}={cookie}{secure_flag}; HttpOnly; SameSite=Lax; Path=/; Max-Age={PROFILE_TTL}'
     for name, value in headers.items():
         handler.send_header(name, value)
     handler.end_headers()
