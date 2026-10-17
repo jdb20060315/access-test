@@ -6,19 +6,27 @@ import ssl
 from urllib.parse import urlsplit
 
 
+LOCAL_HOSTS = ('127.0.0.1', 'localhost', '::1')
+
+
 def connect_database(dsn=None, connector=None):
     dsn = os.environ.get('DATABASE_URL', '') if dsn is None else dsn
     parsed = urlsplit(dsn)
-    if (parsed.scheme not in ('postgres', 'postgresql') or not parsed.hostname
-            or not parsed.hostname.endswith('.neon.tech') or not parsed.password
+    host = parsed.hostname or ''
+    if (parsed.scheme not in ('postgres', 'postgresql') or not host or not parsed.password
             or set(parsed.password) == {'*'}):
         raise ValueError('invalid_connection_string')
-    ca = ssl.get_default_verify_paths().cafile
-    if not ca or not Path(ca).is_file():
-        raise ValueError('trusted_ca_unavailable')
+    # 本机数据库仅用于自托管部署；其它主机仍只接受 Neon，防止连接串被改指到别处。
+    if host not in LOCAL_HOSTS and not host.endswith('.neon.tech'):
+        raise ValueError('invalid_connection_string')
     if connector is None:
         import psycopg
         connector = psycopg.connect
+    if host in LOCAL_HOSTS:
+        return connector(dsn, connect_timeout=10)
+    ca = ssl.get_default_verify_paths().cafile
+    if not ca or not Path(ca).is_file():
+        raise ValueError('trusted_ca_unavailable')
     return connector(dsn, connect_timeout=10, sslmode='verify-full', sslrootcert=ca)
 
 

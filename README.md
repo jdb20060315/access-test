@@ -36,3 +36,14 @@ Render 出口登录运动世界持续被上游边缘安全拦截（HTTP 567 HTML
 - 未确认退出的会话状态由共享令牌派生密钥加密后保存在 VPS `/opt/sport-relay/state/`（0700/0600），供事后"退出云端账号"核对；确认退出即删除，超过 7 天自动清理。Render 侧加密会话仍按原逻辑保存 Neon。
 - 限频、预约锁、报告脱敏语义与本地模式相同；`/api/diagnose` 同样经中继执行。部署后 /health 应显示 release=multi-school-v12-vps-relay、runner_mode=ssh。
 - 本地检查增加 `python -m unittest test_runner_remote`（假 SSH 通道，不连 VPS 或运动世界）。中继已完成的部署验收：有效 ping、错误令牌拒绝、超长载荷拒绝、强制命令锁死（shell 命令不可达）、二进制以 sportrelay 可执行、状态加密往返。
+
+## 自托管部署（替代 Render）
+
+同一份代码可直接跑在国内机器上，公网入口交给 Cloudflare Tunnel，因此不需要备案、不开放任何入站 Web 端口。
+
+- `BIND_HOST`（默认 `0.0.0.0`）：自托管设 `127.0.0.1`，只允许本机/Tunnel 访问，机房扫描不到任何端口。
+- `PUBLIC_ORIGIN`：对外域名（如 `https://你的域名`），用于 Origin 校验；未设时回落到 `RENDER_EXTERNAL_URL`。**域名确定前不要对外开放提交**，否则 POST 会因 Origin 不匹配被拒。
+- `DATABASE_URL`：新增允许 `127.0.0.1`/`localhost`/`::1` 的本机 Postgres（自托管）；其它主机仍只接受 Neon，防止连接串被改指他处。
+- `MAX_ACTIVE_RUNS`：并发上限，1-8 的整数，默认 2；非法值保守退回 1；`/health` 会显示实际值。排障期的强制单任务已解除，仍受 `resources_available()` 内存水位保护。
+- `RUNNER_MODE`：同机执行用 `local`（本机出口即国内出口，无需中继）；跨机时用 `ssh` 走 sport-relay。
+- 实测容量（8 核 / 可用 6.7G 机器）：二进制单实例峰值 16.4MB，8 个并发启动无压力。并发上限的真实约束是上游风控与内存水位，不是 CPU。

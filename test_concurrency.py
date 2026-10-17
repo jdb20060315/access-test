@@ -30,11 +30,12 @@ class ConcurrencyTest(unittest.TestCase):
                 rfile=io.BytesIO(payload),
             )
 
-        self.assertEqual(service.MAX_ACTIVE_RUNS, 1)
+        self.assertGreaterEqual(service.MAX_ACTIVE_RUNS, 1)
         replies = []
         service.ACTIVE_KEYS.clear()
         try:
             with patch.object(service, 'READY', True), \
+                 patch.object(service, 'MAX_ACTIVE_RUNS', 1), \
                  patch.object(service, 'session', side_effect=lambda handler: handler.csrf), \
                  patch.object(service, 'settings', return_value=('test-secret', None, None, None)), \
                  patch.object(service, 'location', return_value={}), \
@@ -191,6 +192,28 @@ class ConcurrencyTest(unittest.TestCase):
             })
         finally:
             service.ACTIVE_KEYS.clear()
+
+
+class ConcurrencyConfigTest(unittest.TestCase):
+    """并发上限读环境变量；非法值一律保守退回 1，不提供 unlimited。"""
+
+    @staticmethod
+    def value(setting=None):
+        environment = {} if setting is None else {'MAX_ACTIVE_RUNS': setting}
+        with patch.dict('os.environ', environment, clear=True):
+            return service.configured_concurrency()
+
+    def test_accepts_range_one_to_eight(self):
+        self.assertEqual(self.value('1'), 1)
+        self.assertEqual(self.value('3'), 3)
+        self.assertEqual(self.value('8'), 8)
+
+    def test_invalid_values_fall_back_to_one(self):
+        for setting in ('0', '9', 'abc', '', '2.5', 'unlimited', ' 9', '-2'):
+            self.assertEqual(self.value(setting), 1, setting)
+
+    def test_unset_defaults_to_two(self):
+        self.assertEqual(self.value(None), 2)
 
 
 if __name__ == '__main__':

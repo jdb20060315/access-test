@@ -23,7 +23,10 @@ from location_input import location
 import personal_store as store
 
 ROOT = Path(__file__).parent
-ORIGIN = os.environ.get('RENDER_EXTERNAL_URL', 'https://access-test-vpz8.onrender.com').rstrip('/')
+# 公网来源校验：自托管用 PUBLIC_ORIGIN（Cloudflare Tunnel 的域名），Render 用 RENDER_EXTERNAL_URL。
+ORIGIN = (os.environ.get('PUBLIC_ORIGIN')
+          or os.environ.get('RENDER_EXTERNAL_URL')
+          or 'https://access-test-vpz8.onrender.com').rstrip('/')
 def memory_available():
     """Read Linux memory headroom, including a smaller container limit."""
     try:
@@ -62,9 +65,15 @@ def start_task(target, *args):
     threading.Thread(target=target, args=args, daemon=True).start()
 
 
-# 本轮故障对照临时固定为单任务，旧环境变量不覆盖；恢复并发需另行发布。
-MAX_ACTIVE_RUNS = 1
-# 执行器位置：local=Render 本机二进制（现状）；ssh=转发国内 VPS 的 sport-relay。
+def configured_concurrency():
+    """并发上限：默认 2；只接受 1-8 的整数，其它值保守退回 1（/health 可见）。"""
+    raw = os.environ.get('MAX_ACTIVE_RUNS', '2').strip()
+    return int(raw) if raw.isdigit() and 1 <= int(raw) <= 8 else 1
+
+
+# 排障期结束：单任务限制解除为可配置，仍受内存水位（resources_available）保护。
+MAX_ACTIVE_RUNS = configured_concurrency()
+# 执行器位置：local=本机二进制（自托管或 Render 现状）；ssh=转发国内 VPS 的 sport-relay。
 RUNNER_MODE = os.environ.get('RUNNER_MODE', 'local').strip().lower() or 'local'
 LOCK = threading.Lock()
 ACTIVE_KEYS = set()

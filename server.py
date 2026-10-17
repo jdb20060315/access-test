@@ -42,4 +42,6 @@ class Handler(BaseHTTPRequestHandler):
 if __name__ == '__main__':
     DATABASE_REPORT = check_database()
     personal_service.initialize()
-    ThreadingHTTPServer(('0.0.0.0', int(os.environ.get('PORT', '8080'))), Handler).serve_forever()
+    # 自托管部署用 BIND_HOST=127.0.0.1，公网入口交给 Cloudflare Tunnel；Render 保持默认 0.0.0.0。
+    BIND_HOST = os.environ.get('BIND_HOST', '0.0.0.0').strip() or '0.0.0.0'
+    ThreadingHTTPServer((BIND_HOST, int(os.environ.get('PORT', '8080'))), Handler).serve_forever()
