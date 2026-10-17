@@ -14,8 +14,9 @@ def degrees(value, limit):
         if len(direction) > 1:
             raise ValueError('invalid_coordinate')
         value = re.sub('[NSEW]', '', value).strip()
-        if re.fullmatch(r'[+-]?\d{1,3}(?:\.\d{1,8})?', value):
-            result = float(value)
+        clean_dec = re.sub(r'[°度]$', '', value).strip()
+        if re.fullmatch(r'[+-]?\d{1,3}(?:\.\d{1,8})?', clean_dec):
+            result = float(clean_dec)
         else:
             parts = re.fullmatch(r'(\d{1,3})\s*[°度]\s*(\d{1,2})(?:\s*[′\'分]\s*(\d{1,2}(?:\.\d{1,4})?)\s*(?:[″"秒])?)?\s*(?:[′\'分])?', value)
             if not parts:
