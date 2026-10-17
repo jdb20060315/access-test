@@ -21,7 +21,7 @@ class Handler(BaseHTTPRequestHandler):
         report['personal_test_ready'] = personal_service.READY
         with personal_service.LOCK:
             active_tasks = len(personal_service.ACTIVE_KEYS)
-        data = {'ok': True, 'personal_test_ready': personal_service.READY, 'multi_account_ready': personal_service.READY, 'release': 'multi-school-v12-vps-relay', 'runner_mode': personal_service.RUNNER_MODE, 'max_active_runs': personal_service.MAX_ACTIVE_RUNS, 'active_tasks': active_tasks} if self.path == '/health' else DATABASE_REPORT if self.path == '/database' else report
+        data = {'ok': True, 'personal_test_ready': personal_service.READY, 'multi_account_ready': personal_service.READY, 'release': 'multi-school-v13-selfhosted', 'runner_mode': personal_service.RUNNER_MODE, 'max_active_runs': personal_service.MAX_ACTIVE_RUNS, 'active_tasks': active_tasks} if self.path == '/health' else DATABASE_REPORT if self.path == '/database' else report
         body = json.dumps(data).encode()
         kind = 'application/json'
         self.send_response(200)
