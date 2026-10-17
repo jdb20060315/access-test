@@ -210,6 +210,11 @@ def checkpoint(root, key):
 def execute(key, account_key, username, password, anchor, distance_km, pace_seconds, diagnose_only=False):
     try:
         identity = anchor.copy()
+        identity['platform'] = 'ios'
+        identity['device_name'] = 'iPhone'
+        identity['os_version'] = '26.5.2'
+        identity['idfa'] = ''
+        identity['manufacturer'] = ''
         identity['device_id'] = str(uuid.UUID(scope('device:' + account_key)[:32])).upper()
         identity['app_install_time'] = 1_760_000_000_000
         identity['mac_address'] = '02:' + ':'.join(scope('mac:' + account_key)[i:i+2] for i in range(0,10,2))
