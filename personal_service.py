@@ -23,10 +23,15 @@ from location_input import location
 import personal_store as store
 
 ROOT = Path(__file__).parent
-# 公网来源校验：自托管用 PUBLIC_ORIGIN（Cloudflare Tunnel 的域名），Render 用 RENDER_EXTERNAL_URL。
-ORIGIN = (os.environ.get('PUBLIC_ORIGIN')
-          or os.environ.get('RENDER_EXTERNAL_URL')
-          or 'https://access-test-vpz8.onrender.com').rstrip('/')
+# 公网来源校验：自托管可用逗号分隔多个 Origin，Render 用 RENDER_EXTERNAL_URL。
+def allowed_origins():
+    configured = (os.environ.get('PUBLIC_ORIGIN')
+                  or os.environ.get('RENDER_EXTERNAL_URL')
+                  or 'https://access-test-vpz8.onrender.com')
+    return {item.strip().rstrip('/') for item in configured.split(',') if item.strip()}
+
+ORIGINS = allowed_origins()
+ORIGIN = next(iter(ORIGINS)) if ORIGINS else 'https://access-test-vpz8.onrender.com'
 def memory_available():
     """Read Linux memory headroom, including a smaller container limit."""
     try:
@@ -343,7 +348,8 @@ def handle(handler, method):
         except Exception:
             send(handler, 503, {'failure': 'database_unavailable'})
         return
-    if handler.headers.get('Origin') != ORIGIN:
+    origin = (handler.headers.get('Origin') or '').rstrip('/')
+    if origin not in ORIGINS and origin != ORIGIN:
         return send(handler, 403, {'failure': 'invalid_origin'})
     if not READY:
         return send(handler, 503, {'failure': 'private_setup_required'})
