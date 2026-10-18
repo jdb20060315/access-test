@@ -240,16 +240,10 @@ def execute(key, account_key, username, password, anchor, distance_km, pace_seco
             shutil.copyfile(ROOT / 'nekosportsworldtool', root / 'nekosportsworldtool')
             (root / 'nekosportsworldtool').chmod(0o700)
             (root / 'identity.json').write_text(json.dumps(identity), encoding='utf-8')
-            osm_src = ROOT / 'school_campus.osm'
-            has_osm = osm_src.is_file()
-            if has_osm:
-                shutil.copyfile(osm_src, root / 'school_campus.osm')
             (root / 'config.json').write_text(json.dumps({
                 'username': '', 'password': '', 'remember': False,
                 'dist_min': 2, 'dist_max': 3, 'pace_min': 360, 'pace_max': 420,
-                'update_check': 'off',
-                'osm_path': str(root / 'school_campus.osm') if has_osm else '',
-                'route_mode': 'road' if has_osm else 'legacy'
+                'update_check': 'off'
             }), encoding='utf-8')
 
             def runner(args, **kwargs):
@@ -263,8 +257,7 @@ def execute(key, account_key, username, password, anchor, distance_km, pace_seco
                 report.update(operation='login_diagnosis', run_attempted=False, record_uploaded=False)
             else:
                 report = single_run(root, username, password, runner=runner, distance_km=distance_km,
-                                    pace_seconds=pace_seconds, journal_name='browser-single-run.json',
-                                    use_road=osm_src.is_file())
+                                    pace_seconds=pace_seconds, journal_name='browser-single-run.json')
             cipher = None if report.get('remote_logout') else checkpoint(root, key)
             store.finish(key, report, cipher)
     except Exception:

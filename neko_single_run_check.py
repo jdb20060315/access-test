@@ -1,12 +1,21 @@
-"""本人单次测试：不声明人脸通过，保留防重复状态，始终核对退出。"""
+"""本人单次测试：不声明人脸通过，保留防重复状态，始终核对退出。
+
+轨迹沿真实道路：先把学校官方点位写入缓存，再用高德步行 API 拉取相邻点位之间的
+真实道路坐标注入缓存，工具拟合环即沿道路走，不再直线穿过建筑物。
+"""
 import json
+import math
 import os
 from pathlib import Path
 import re
 import subprocess
 import sys
+import time
+import urllib.request
+
 from neko_account_check import check, run_arguments
-import math
+
+AMAP_KEY = os.environ.get('AMAP_KEY', '8134837038215d9166be3f78afa1de56')
 
 
 def meter_summary(output):
@@ -14,10 +23,77 @@ def meter_summary(output):
     return round(float(match.group(1)) * 1000) if match else None
 
 
-def single_run(root, username, password, runner=subprocess.run, distance_km=2, pace_seconds=390, journal_name='single-run-2km-face0.json', use_road=False):
+def _gcj02_to_bd09(lat, lng):
+    x, y = lng, lat
+    z = math.sqrt(x * x + y * y) + 0.00002 * math.sin(y * math.pi * 3000.0 / 180.0)
+    theta = math.atan2(y, x) + 0.000003 * math.cos(x * math.pi * 3000.0 / 180.0)
+    return z * math.sin(theta) + 0.006, z * math.cos(theta) + 0.0065
+
+
+def _amap_walk(olng, olat, dlng, dlat):
+    url = (f'https://restapi.amap.com/v3/direction/walking?key={AMAP_KEY}'
+           f'&origin={olng:.6f},{olat:.6f}&destination={dlng:.6f},{dlat:.6f}')
+    request = urllib.request.Request(url, headers={'User-Agent': 'campus-relay/1.0'})
+    with urllib.request.urlopen(request, timeout=12) as response:
+        data = json.loads(response.read().decode())
+    points = []
+    if data.get('status') == '1' and data.get('route', {}).get('paths'):
+        for step in data['route']['paths'][0].get('steps', []):
+            for pair in step.get('polyline', '').split(';'):
+                parts = pair.split(',')
+                if len(parts) == 2:
+                    points.append((float(parts[1]), float(parts[0])))
+    return points
+
+
+def inject_road_points(binary, root, anchor=None):
+    """用高德沿路坐标丰富点位缓存，让工具的拟合环沿真实道路走。"""
+    root = Path(root)
+    cache = root / 'points_cache.json'
+    env = dict(os.environ, HOME=str(root), LANG='C.UTF-8')
+    sample = subprocess.run([binary, 'obs-sample', '--dist', '2.0'], cwd=root, env=env,
+                            capture_output=True, text=True, timeout=90)
+    if not cache.exists():
+        return {'injected': False, 'reason': 'no_cache'}
+    try:
+        doc = json.loads(cache.read_text())
+    except Exception:
+        return {'injected': False, 'reason': 'bad_cache'}
+    official = doc.get('points') or []
+    if len(official) < 2:
+        return {'injected': False, 'reason': 'too_few_points'}
+    enriched = []
+    road_total = 0
+    count = len(official)
+    for index in range(count):
+        first = official[index]
+        second = official[(index + 1) % count]
+        enriched.append({
+            'lon': first['lon'], 'lat': first['lat'],
+            'isFixed': first.get('isFixed', 0),
+            'pointName': first.get('pointName', ''),
+            'glon': first['glon'], 'glat': first['glat'],
+        })
+        try:
+            road = _amap_walk(first['glon'], first['glat'], second['glon'], second['glat'])
+        except Exception:
+            continue
+        for lat, lng in road[1:-1]:
+            bd_lat, bd_lng = _gcj02_to_bd09(lat, lng)
+            enriched.append({'lon': bd_lng, 'lat': bd_lat, 'isFixed': 0,
+                             'pointName': 'road', 'glon': lng, 'glat': lat})
+            road_total += 1
+    if not road_total:
+        return {'injected': False, 'reason': 'no_road_points'}
+    doc['points'] = enriched
+    doc['ts'] = int(time.time() * 1000)
+    cache.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding='utf-8')
+    return {'injected': True, 'official': count, 'total': len(enriched), 'road_points': road_total}
+
+
+def single_run(root, username, password, runner=subprocess.run, distance_km=2, pace_seconds=390,
+               journal_name='single-run-2km-face0.json'):
     arguments = run_arguments(distance_km, pace_seconds)
-    if use_road:
-        arguments += ['--route', 'road']
     if journal_name not in ('single-run-2km-face0.json', 'browser-single-run.json'):
         raise ValueError('invalid_journal')
     root = Path(root)
@@ -55,6 +131,10 @@ def single_run(root, username, password, runner=subprocess.run, distance_km=2, p
         result['run_attempted'] = True
         result['record_uploaded'] = None
         try:
+            try:
+                result['road_injection'] = inject_road_points(args[0], root)
+            except Exception as exc:
+                result['road_injection'] = {'injected': False, 'reason': type(exc).__name__}
             duration_minutes = math.ceil(distance_km * pace_seconds / 60)
             run_args = [args[0], *arguments, '--face', '0', '--ago', str(duration_minutes)]
             running = runner(run_args, **{**kwargs, 'timeout': 120})

@@ -40,8 +40,8 @@ class SavedSettingsTest(unittest.TestCase):
                                '(test_key TEXT PRIMARY KEY, phase TEXT, report TEXT)')
         self.cipher = Fernet(Fernet.generate_key())
         self.fields = dict(username='13800000000', password='dummy-test-password',
-                           city='哈尔滨市', latitude='45.86', longitude='126.56',
-                           distance_km='2', cadence='160', step_length_m='1')
+                           school_name='黑龙江外国语学院', latitude='45.86', longitude='126.56',
+                           distance_km='2', run_minutes='15')
         self.patches = [
             patch.object(store, 'connect_database', side_effect=lambda: LocalConnection(self.database)),
             patch.object(service, 'settings', return_value=('test-key', None, None, self.cipher)),
@@ -90,7 +90,7 @@ class SavedSettingsTest(unittest.TestCase):
                 status, _ = self.request('/api/run', {'use_saved': True, 'consent': True})
             self.assertEqual(status, 202)
             self.assertEqual(start.call_args.args[3:5], ('13800000000', 'dummy-test-password'))
-            self.assertEqual(start.call_args.args[-2:], (2.0, 375))
+            self.assertEqual(start.call_args.args[-2:], (2.0, 450))
         finally:
             service.ACTIVE_KEYS.clear()
 
