@@ -34,15 +34,16 @@ button:disabled{opacity:.5}
 
 <div class="map-wrap" id="mapWrap">
   <div class="map-bar" id="mapBar" title="双击标题栏可放大或收起">
-    <span style="font-weight:bold;font-size:14px;color:#147956">🗺️ 校园避障路线（高德地图）</span>
-    <div style="display:flex;gap:6px">
-      <button class="map-btn" id="btnResetPoints" type="button" style="background:#6c757d">🔄 重置</button>
+    <span style="font-weight:bold;font-size:14px;color:#147956">🗺️ 校园避障路线（高德 3D / 卫星实景）</span>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">
+      <button class="map-btn" id="btnToggleLayer" type="button" style="background:#4b5563">🛰️ 卫星实景</button>
+      <button class="map-btn" id="btnResetPoints" type="button" style="background:#6c757d">🔄 随机重置</button>
       <button class="map-btn" id="btnPlanRoute" type="button">沿路连线</button>
       <button class="map-btn" id="btnToggleExpand" type="button" style="background:#0d6efd">⛶ 放大</button>
     </div>
   </div>
   <div id="amapContainer" class="map-box" title="双击地图或点右上角可放大全屏"></div>
-  <p class="map-tip" id="mapInfo">📍 提示：地图已<b>直接放大到最大路网</b>。双击或点右上角【放大】可全屏选点；拖动 5 个数字点，高德会自动沿水泥路连线，绝不穿墙；画错点【🔄 重置】即可重新来。</p>
+  <p class="map-tip" id="mapInfo">📍 提示：已开启 <b>3D 立体楼层</b> 模式。点右上角【🛰️ 卫星实景】可切换为真实航拍照片看清跑道与建筑；拖动数字点，高德会自动沿校园水泥路连线，绝不穿墙。</p>
 </div>
 
 <label for="distance">距离（2–3 km）</label>
@@ -87,7 +88,7 @@ el('logout').onclick=async()=>{el('logout').disabled=true;try{await fetch('/api/
 
 // === 高德地图避障规划交互 ===
 const AMAP_KEY = '8134837038215d9166be3f78afa1de56';
-let aMap = null, aMarkers = [], aPolyline = null;
+let aMap = null, aMarkers = [], aPolyline = null, aSatLayer = null, isSatellite = false;
 function parseCoord(val){if(!val)return null;val=String(val).trim().toUpperCase().replace('北纬','N').replace('南纬','S').replace('东经','E').replace('西经','W');const dir=(val.match(/[NSEW]/g)||[])[0];val=val.replace(/[NSEW]/g,'').trim().replace(/[°度]$/,'');let num=parseFloat(val);return isNaN(num)?null:(dir==='S'||dir==='W'?-num:num);}
 function wgs84ToGcj02(lat,lon){let x=lon-105,y=lat-35;let dLat=-100+2*x+3*y+0.2*y*y+0.1*x*y+0.2*Math.sqrt(Math.abs(x));dLat+=(20*Math.sin(6*x*Math.PI)+20*Math.sin(2*x*Math.PI))*2/3;dLat+=(20*Math.sin(y*Math.PI)+40*Math.sin(y/3*Math.PI))*2/3;dLat+=(160*Math.sin(y/12*Math.PI)+320*Math.sin(y*Math.PI/30))*2/3;let dLon=300+x+2*y+0.1*x*x+0.1*x*y+0.1*Math.sqrt(Math.abs(x));dLon+=(20*Math.sin(6*x*Math.PI)+20*Math.sin(2*x*Math.PI))*2/3;dLon+=(20*Math.sin(x*Math.PI)+40*Math.sin(x/3*Math.PI))*2/3;dLon+=(150*Math.sin(x/12*Math.PI)+300*Math.sin(x/30*Math.PI))*2/3;let rad=lat/180*Math.PI;let magic=1-0.00669342162296594323*Math.sin(rad)**2;return[lat+dLat*180/((6335552.717000426/(magic*Math.sqrt(magic)))*Math.PI),lon+dLon*180/((6378245/Math.sqrt(magic)*Math.cos(rad))*Math.PI)];}
 function initMapIfReady(){
@@ -95,9 +96,34 @@ function initMapIfReady(){
   const container=el('amapContainer');if(!container||aMap)return;
   const lat=parseCoord(el('latitude').value)||26.53610,lon=parseCoord(el('longitude').value)||107.9308;
   const [glat,glon]=wgs84ToGcj02(lat,lon);
-  aMap=new AMap.Map('amapContainer',{zoom:18,center:[glon,glat],resizeEnable:true});
+  aMap=new AMap.Map('amapContainer',{
+    zoom:18,
+    center:[glon,glat],
+    viewMode:'3D',
+    pitch:45,
+    buildingAnimation:true,
+    features:['bg','road','building','point'],
+    resizeEnable:true
+  });
   aMap.on('dblclick',toggleExpand);
   setupMarkers([glon,glat]);
+}
+function toggleLayer(){
+  if(!aMap||typeof AMap==='undefined')return;
+  const btn=el('btnToggleLayer');
+  if(!aSatLayer){
+    aSatLayer=new AMap.TileLayer.Satellite();
+  }
+  isSatellite=!isSatellite;
+  if(isSatellite){
+    aMap.add(aSatLayer);
+    if(btn)btn.textContent='🗺️ 3D矢量图';
+    const infoEl=el('mapInfo');if(infoEl)infoEl.innerHTML='🛰️ <b>已切换为真实卫星航拍照片</b>：可直接对着操场跑道、建筑物屋顶精确拖动点位。';
+  }else{
+    aMap.remove(aSatLayer);
+    if(btn)btn.textContent='🛰️ 卫星实景';
+    const infoEl=el('mapInfo');if(infoEl)infoEl.innerHTML='🗺️ <b>已切换为 3D 立体楼层图</b>：建筑立面与楼层立体阴影清晰可见。';
+  }
 }
 function toggleExpand(){
   const wrap=el('mapWrap'),btn=el('btnToggleExpand');if(!wrap)return;
@@ -111,16 +137,20 @@ function resetPoints(){
   const lat=parseCoord(el('latitude').value)||26.53610,lon=parseCoord(el('longitude').value)||107.9308;
   const [glat,glon]=wgs84ToGcj02(lat,lon);
   aMap.setZoomAndCenter(18,[glon,glat]);
-  setupMarkers([glon,glat]);
-  const infoEl=el('mapInfo');if(infoEl)infoEl.innerHTML='🔄 <b>已重置 5 个点位</b>，正在沿道路重新连线…';
+  setupMarkers([glon,glat],true);
+  const infoEl=el('mapInfo');if(infoEl)infoEl.innerHTML='🔄 <b>已动态随机刷新 5 个点位</b>，正在重新沿道路规划…';
 }
-function setupMarkers(centerLngLat){
+function setupMarkers(centerLngLat,randomize=false){
   if(!aMap)return;
   aMarkers.forEach(m=>m.setMap(null));aMarkers=[];
   if(aPolyline){aPolyline.setMap(null);aPolyline=null;}
-  const offsets=[[0.0008,0.0008],[0.0012,-0.0006],[0.0002,-0.0014],[-0.0010,-0.0008],[-0.0006,0.0010]];
-  offsets.forEach((off,i)=>{
-    const pos=[centerLngLat[0]+off[1],centerLngLat[1]+off[0]];
+  const baseAngle=randomize?Math.random()*Math.PI*2:0;
+  const radiusBase=0.0010;
+  const angles=[0,1.25,2.5,3.75,5.0].map(a=>a+baseAngle);
+  angles.forEach((ang,i)=>{
+    const r=radiusBase*(0.7+Math.random()*0.6);
+    const dLat=r*Math.cos(ang),dLon=r*Math.sin(ang)*1.1;
+    const pos=[centerLngLat[0]+dLon,centerLngLat[1]+dLat];
     const marker=new AMap.Marker({map:aMap,position:pos,draggable:true,cursor:'move',content:`<div class="marker-badge">${i+1}</div>`,offset:new AMap.Pixel(-13,-13)});
     marker.on('dragend',()=>planWalkingRoute());
     aMarkers.push(marker);
@@ -151,11 +181,12 @@ async function planWalkingRoute(){
     if(infoEl)infoEl.innerHTML=`✅ <b>道路规划完成</b>：沿真实道路总长 <b>${(totalMeters/1000).toFixed(2)} km</b>，避开建筑物，不穿墙！可继续<b>拖拽任意点位</b>微调。`;
   }catch(e){if(infoEl)infoEl.textContent='高德路径规划请求受限，可点击按钮重试。';}
 }
-function onLocationInputChanged(){const lat=parseCoord(el('latitude').value),lon=parseCoord(el('longitude').value);if(lat&&lon&&aMap){const[glat,glon]=wgs84ToGcj02(lat,lon);aMap.setZoomAndCenter(18,[glon,glat]);setupMarkers([glon,glat]);}}
+function onLocationInputChanged(){const lat=parseCoord(el('latitude').value),lon=parseCoord(el('longitude').value);if(lat&&lon&&aMap){const[glat,glon]=wgs84ToGcj02(lat,lon);aMap.setZoomAndCenter(18,[glon,glat]);setupMarkers([glon,glat],true);}}
 ['latitude','longitude'].forEach(id=>{const elem=el(id);if(elem&&elem.addEventListener)elem.addEventListener('change',onLocationInputChanged);});
 if(el('btnPlanRoute'))el('btnPlanRoute').onclick=()=>{if(!aMap)initMapIfReady();else planWalkingRoute();};
 if(el('btnResetPoints'))el('btnResetPoints').onclick=resetPoints;
 if(el('btnToggleExpand'))el('btnToggleExpand').onclick=toggleExpand;
+if(el('btnToggleLayer'))el('btnToggleLayer').onclick=toggleLayer;
 if(el('mapBar'))el('mapBar').ondblclick=toggleExpand;
 if(typeof window!=='undefined'){window.addEventListener('load',()=>setTimeout(initMapIfReady,800));}
 </script></html>
