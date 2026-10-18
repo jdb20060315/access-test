@@ -174,8 +174,9 @@ def parameters(payload, owner):
         raise ValueError('account_or_consent_required')
     anchor = location(payload.get('city'), payload.get('latitude'), payload.get('longitude'))
     try:
-        distance_km, cadence, step_length_m = (float(payload.get(field))
-                                             for field in ('distance_km', 'cadence', 'step_length_m'))
+        distance_km = float(payload.get('distance_km') or 2.26)
+        cadence = float(payload.get('cadence') or 160)
+        step_length_m = float(payload.get('step_length_m') or 1.0)
     except (TypeError, ValueError):
         raise ValueError('invalid_running_parameters') from None
     if (not all(math.isfinite(v) for v in (distance_km, cadence, step_length_m))
@@ -321,6 +322,59 @@ def revoke(key):
 
 
 
+def fetch_school_points(username, password, anchor):
+    account_key = 'account-run-v2:' + scope('account:' + username.strip())
+    identity = anchor.copy()
+    identity['platform'] = 'ios'
+    identity['device_name'] = 'iPhone'
+    identity['os_version'] = '26.5.2'
+    identity['idfa'] = ''
+    identity['manufacturer'] = ''
+    identity['device_id'] = str(uuid.UUID(scope('device:' + account_key)[:32])).upper()
+    identity['app_install_time'] = 1_760_000_000_000
+    identity['mac_address'] = '02:' + ':'.join(scope('mac:' + account_key)[i:i+2] for i in range(0, 10, 2))
+
+    with tempfile.TemporaryDirectory(prefix='personal-pts-') as folder:
+        root = Path(folder)
+        shutil.copyfile(ROOT / 'nekosportsworldtool', root / 'nekosportsworldtool')
+        (root / 'nekosportsworldtool').chmod(0o700)
+        (root / 'identity.json').write_text(json.dumps(identity), encoding='utf-8')
+        (root / 'config.json').write_text(json.dumps({
+            'username': '', 'password': '', 'remember': False,
+            'dist_min': 2, 'dist_max': 3, 'pace_min': 360, 'pace_max': 420,
+            'update_check': 'off'
+        }), encoding='utf-8')
+        env = {'PATH': '/usr/bin:/bin', 'HOME': str(root), 'LANG': 'C.UTF-8'}
+        binary = root / 'nekosportsworldtool'
+
+        login = subprocess.run([str(binary), 'login', '--user', username, '--pass', password],
+                               cwd=root, env=env, capture_output=True, text=True, timeout=60)
+        if login.returncode != 0:
+            err = login.stdout + '\n' + login.stderr
+            if '10121' in err or '设备' in err:
+                raise ValueError('device_conflict')
+            raise ValueError('login_failed')
+
+        try:
+            subprocess.run([str(binary), 'obs-sample', '--dist', '2.0'],
+                           cwd=root, env=env, capture_output=True, text=True, timeout=60)
+            cache_file = root / 'points_cache.json'
+            if not cache_file.exists():
+                raise ValueError('points_unavailable')
+            doc = json.loads(cache_file.read_text(encoding='utf-8'))
+            pts = doc.get('points') or []
+            results = []
+            for p in pts:
+                results.append({
+                    'name': p.get('pointName') or '打卡点',
+                    'lat': p.get('glat') or p.get('lat'),
+                    'lng': p.get('glon') or p.get('lon')
+                })
+            return results
+        finally:
+            subprocess.run([str(binary), 'logout'], cwd=root, env=env, capture_output=True, timeout=30)
+
+
 def handle(handler, method):
     if method == 'GET':
         if handler.path == '/':
@@ -374,6 +428,18 @@ def handle(handler, method):
     if not csrf or not secrets.compare_digest(handler.headers.get('X-CSRF-Token', ''), csrf):
         return send(handler, 403, {'failure': 'session_expired'})
     key = 'browser-run-v2:' + csrf
+    if handler.path == '/api/points':
+        try:
+            fields, anchor, _, _ = parameters(payload, csrf)
+            pts = fetch_school_points(fields['username'], fields['password'], anchor)
+            return send(handler, 200, {'ok': True, 'points': pts})
+        except ValueError as exc:
+            cat = ('invalid_location' if str(exc) in ('invalid_city', 'invalid_coordinate', 'location_outside_supported_area')
+                   else str(exc) if str(exc) in ('device_conflict', 'login_failed', 'points_unavailable')
+                   else 'account_or_consent_required')
+            return send(handler, 400, {'ok': False, 'failure': cat})
+        except Exception:
+            return send(handler, 500, {'ok': False, 'failure': 'points_fetch_error'})
     if handler.path in ('/api/run', '/api/profile', '/api/diagnose'):
         try:
             if handler.path == '/api/profile' and payload.get('forget') is True:
