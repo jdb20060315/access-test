@@ -10,7 +10,7 @@ button{background:#147956;color:white;margin-top:16px;cursor:pointer}
 button:disabled{opacity:.5}
 #mapSection{display:none}
 #mapSection.show{display:block}
-.map-wrap{margin-top:16px;border:1px solid #b6cbc0;border-radius:8px;padding:12px;background:#f8faf9;transition:all .2s ease}
+.map-wrap{border:1px solid #b6cbc0;border-radius:8px;padding:12px;background:#f8faf9}
 .map-wrap.fullscreen{position:fixed;top:0;left:0;right:0;bottom:0;width:100vw;height:100vh;max-width:none;margin:0;border-radius:0;z-index:99999;background:white;box-sizing:border-box;padding:14px;display:flex;flex-direction:column}
 .map-box{width:100%;height:70vh;border-radius:6px;border:1px solid #ccd9d2;margin-top:8px}
 .map-wrap.fullscreen .map-box{flex:1;height:auto;min-height:0}
@@ -21,6 +21,9 @@ button:disabled{opacity:.5}
 .dist-bar{background:#e8f0ec;border-radius:8px;padding:10px 14px;margin-top:10px;font-size:15px;font-weight:bold}
 .dist-bar.ok{background:#d1fae5;color:#065f46}
 .dist-bar.warn{background:#fef3c7;color:#92400e}
+.school-check{font-size:13px;margin-top:6px;padding:6px 10px;border-radius:6px}
+.school-check.ok{background:#d1fae5;color:#065f46}
+.school-check.warn{background:#fef3c7;color:#92400e}
 </style>
 <main>
 <h1>校园跑打卡</h1>
@@ -29,19 +32,19 @@ button:disabled{opacity:.5}
 <input id="username" type="tel" inputmode="numeric" required pattern="1[3-9][0-9]{9}" maxlength="11">
 <label for="password">密码</label>
 <input id="password" type="password" required maxlength="256">
-<label for="city">学校所在城市</label>
-<input id="city" placeholder="例如：凯里市" required maxlength="32">
+<label for="school_name">学校名称（全称）</label>
+<input id="school_name" placeholder="例如：黔东南民族职业技术学院" required maxlength="64">
+<p class="school-check" id="schoolCheck" style="display:none"></p>
 <label for="latitude">指南针北纬</label>
-<input id="latitude" placeholder="例如：26.53610" required maxlength="48">
+<input id="latitude" placeholder="打开手机指南针看北纬，如 26.53610" required maxlength="48">
 <label for="longitude">指南针东经</label>
-<input id="longitude" placeholder="例如：107.9308" required maxlength="48">
-<label for="distance">目标距离（2–3 km）</label>
-<input id="distance" type="number" min="2" max="3" step="0.01" value="2.2" required>
-<label for="cadence">步频（步/分）</label>
-<input id="cadence" type="number" min="140" max="200" value="160" required>
-<label for="stepLength">步幅（米/步）</label>
-<input id="stepLength" type="number" min="0.7" max="1.5" step="0.01" value="1.0" required>
+<input id="longitude" placeholder="如 107.9308" required maxlength="48">
+<label for="distance">想跑多远（2–3 km）</label>
+<input id="distance" type="number" min="2" max="3" step="0.1" value="2.2" required>
+<label for="run_minutes">想跑多少分钟</label>
+<input id="run_minutes" type="number" min="8" max="45" value="15" required>
 <p id="estimate" role="status"></p>
+<p id="paceInfo" style="font-size:13px;color:#557065;margin:4px 0 0"></p>
 <label><input id="consent" type="checkbox" required> 这是我的账号，我同意服务器处理本次账号密码并提交模拟跑步记录。</label>
 <p>提交后系统自动登录运动世界，拉取学校分配的真实打卡点，在卫星地图上展示。请依次点击 1→2→3→4→5 沿校园道路连线，画够目标距离后确认提交。</p>
 <button id="startBtn" type="button">▶ 开始跑步打卡</button>
@@ -52,14 +55,14 @@ button:disabled{opacity:.5}
   <div class="map-bar" id="mapBar">
     <span style="font-weight:bold;font-size:14px;color:#147956">🗺️ 学校真实点位</span>
     <div style="display:flex;gap:6px;flex-wrap:wrap">
-      <button class="map-btn" id="btnUndo" type="button" style="background:#6c757d">↩ 撤销上一段</button>
-      <button class="map-btn" id="btnRedraw" type="button" style="background:#dc2626">🗑 重新画</button>
+      <button class="map-btn" id="btnUndo" type="button" style="background:#6c757d">↩ 撤销</button>
+      <button class="map-btn" id="btnRedraw" type="button" style="background:#dc2626">🗑 重画</button>
       <button class="map-btn" id="btnToggleExpand" type="button" style="background:#0d6efd">⛶ 全屏</button>
     </div>
   </div>
   <div id="amapContainer" class="map-box"></div>
   <div class="dist-bar" id="distBar">📏 已画：<b id="drawnDist">0.00</b> km / 目标：<b id="targetDist">2.20</b> km</div>
-  <p class="map-tip" id="mapInfo">👆 请按顺序点击数字标徽 1→2→3→4→5，系统会沿校园真实道路自动画线。</p>
+  <p class="map-tip" id="mapInfo"></p>
   <button id="confirmBtn" type="button" disabled style="background:#d97706;font-weight:bold;font-size:16px;margin-top:10px">✅ 确认提交（按此路线打卡）</button>
 </div>
 </section>
@@ -79,24 +82,50 @@ let preparing=false,confirming=false;
 
 function parseCoord(v){if(!v)return null;v=String(v).trim().toUpperCase().replace('北纬','N').replace('南纬','S').replace('东经','E').replace('西经','W');const d=(v.match(/[NSEW]/g)||[])[0];v=v.replace(/[NSEW]/g,'').trim().replace(/[°度]$/,'');let n=parseFloat(v);return isNaN(n)?null:(d==='S'||d==='W'?-n:n);}
 function w2g(lat,lon){let x=lon-105,y=lat-35;let dLa=-100+2*x+3*y+.2*y*y+.1*x*y+.2*Math.sqrt(Math.abs(x));dLa+=(20*Math.sin(6*x*Math.PI)+20*Math.sin(2*x*Math.PI))*2/3;dLa+=(20*Math.sin(y*Math.PI)+40*Math.sin(y/3*Math.PI))*2/3;dLa+=(160*Math.sin(y/12*Math.PI)+320*Math.sin(y*Math.PI/30))*2/3;let dLo=300+x+2*y+.1*x*x+.1*x*y+.1*Math.sqrt(Math.abs(x));dLo+=(20*Math.sin(6*x*Math.PI)+20*Math.sin(2*x*Math.PI))*2/3;dLo+=(20*Math.sin(x*Math.PI)+40*Math.sin(x/3*Math.PI))*2/3;dLo+=(150*Math.sin(x/12*Math.PI)+300*Math.sin(x/30*Math.PI))*2/3;let r=lat/180*Math.PI,m=1-.00669342162296594323*Math.sin(r)**2;return[lat+dLa*180/((6335552.717/(m*Math.sqrt(m)))*Math.PI),lon+dLo*180/((6378245/Math.sqrt(m)*Math.cos(r))*Math.PI)];}
+function haversine(lat1,lon1,lat2,lon2){const R=6371000,dLa=(lat2-lat1)*Math.PI/180,dLo=(lon2-lon1)*Math.PI/180;const a=Math.sin(dLa/2)**2+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLo/2)**2;return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));}
 
-function estimate(){const d=+el('distance').value||0,c=+el('cadence').value||0,s=+el('stepLength').value||0;el('estimate').textContent=d>=2&&c>=140&&s>=.7?`预计用时约 ${Math.ceil(d*1000/(c*s))} 分钟`:'';}
-['distance','cadence','stepLength'].forEach(id=>el(id).addEventListener('input',estimate));estimate();
+function estimate(){
+  const d=+el('distance').value||0,m=+el('run_minutes').value||0;
+  el('estimate').textContent=d>=2&&m>=8?`配速约 ${Math.floor(m*60/d/60)}:${String(Math.round(m*60/d)%60).padStart(2,'0')}/km`:'';
+  el('paceInfo').textContent=d>=2&&m>=8?`系统将按 ${d} km / ${m} 分钟 = 配速 ${Math.round(m*60/d)} 秒/公里 自动提交`:'';}
+['distance','run_minutes'].forEach(id=>el(id).addEventListener('input',estimate));estimate();
 
-function fields(){return{username:el('username').value.trim(),password:el('password').value,consent:el('consent').checked,city:el('city').value.trim(),latitude:el('latitude').value.trim(),longitude:el('longitude').value.trim(),distance_km:el('distance').value,cadence:el('cadence').value,step_length_m:el('stepLength').value};}
+// 学校名称 + 经纬度交叉校验（高德地理编码）
+async function checkSchoolLocation(){
+  const name=el('school_name').value.trim(),lat=parseCoord(el('latitude').value),lon=parseCoord(el('longitude').value);
+  const chk=el('schoolCheck');
+  if(!name||!lat||!lon||name.length<3){chk.style.display='none';return;}
+  chk.style.display='block';chk.className='school-check';chk.textContent='⏳ 正在高德地图上查找学校位置…';
+  try{
+    const r=await fetch(`https://restapi.amap.com/v3/geocode/geo?key=${AMAP_KEY}&address=${encodeURIComponent(name)}`);
+    const d=await r.json();
+    if(d.status==='1'&&d.geocodes&&d.geocodes[0]){
+      const loc=d.geocodes[0].location.split(',').map(Number);
+      const dist=haversine(lat,lon,loc[1],loc[0]);
+      if(dist<2000){
+        chk.className='school-check ok';chk.textContent=`✅ 学校定位与指南针位置相距 ${Math.round(dist)} 米，匹配。`;
+      }else{
+        chk.className='school-check warn';chk.textContent=`⚠️ 学校「${name}」与指南针位置相距 ${(dist/1000).toFixed(1)} 公里，可能不在同一个地方，请核对。`;
+      }
+    }else{chk.className='school-check warn';chk.textContent='⚠️ 高德未找到该学校，请检查名称是否正确。';}
+  }catch{chk.className='school-check warn';chk.textContent='⚠️ 校验请求失败，可忽略继续。';}
+}
+['school_name','latitude','longitude'].forEach(id=>el(id).addEventListener('change',()=>setTimeout(checkSchoolLocation,300)));
+
+function fields(){return{username:el('username').value.trim(),password:el('password').value,consent:el('consent').checked,school_name:el('school_name').value.trim(),latitude:el('latitude').value.trim(),longitude:el('longitude').value.trim(),distance_km:el('distance').value,run_minutes:el('run_minutes').value};}
 
 // === 第一步：点开始 → 拉取学校真实点位 → 弹出地图 ===
 el('startBtn').onclick=async()=>{
   if(preparing)return;
   const f=fields();
-  if(!f.username||!f.password||!f.city||!f.latitude||!f.longitude){alert('请填完整手机号、密码、城市、经纬度。');return;}
+  if(!f.username||!f.password||!f.school_name||!f.latitude||!f.longitude){alert('请填完整手机号、密码、学校名称和经纬度。');return;}
   if(!f.consent){alert('请勾选同意。');return;}
   preparing=true;el('startBtn').disabled=true;el('startBtn').textContent='⏳ 正在登录并拉取学校真实点位…';
   try{
     const r=await fetch('/api/points',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(f)});
     const d=await r.json();
     if(!r.ok||!d.ok||!d.points||!d.points.length){
-      const em={device_conflict:'手机 App 未退出（设备保护），请先在 App 里退出登录。',login_failed:'登录失败，请核对手机号密码。',points_unavailable:'学校当前未开放点位。'};
+      const em={device_conflict:'❌ 手机 App 未退出！请先打开手机上的运动世界 App → 我的 → 设置 → 退出登录，然后再回来点这个按钮。',login_failed:'❌ 登录失败，请核对手机号与密码是否正确。如果确认正确，可能是设备保护，请等 1 小时后再试。',points_unavailable:'❌ 学校当前未开放点位或不在有效跑步时段。'};
       throw Error(em[d.failure]||d.failure||'获取失败');
     }
     schoolPoints=d.points;
@@ -117,7 +146,6 @@ function showMap(){
     aRoad=new AMap.TileLayer.RoadNet();
     aMap=new AMap.Map('amapContainer',{zoom:19,center:[p0.lng,p0.lat],layers:[aSat,aRoad],resizeEnable:true});
   }
-  // 打点
   aMarkers.forEach(m=>m.setMap(null));aMarkers=[];
   if(aPolyline){aPolyline.setMap(null);aPolyline=null;}
   drawnSegs=[];drawnTotalM=0;drawIdx=0;realPointsReady=true;
@@ -127,32 +155,24 @@ function showMap(){
     aMarkers.push(mk);
   });
   updateDistBar();
-  el('mapInfo').innerHTML=`🎯 <b>已获取学校真实点位</b>：${schoolPoints.map((p,i)=>`${i+1}.${p.name}`).join('、')}<br>👆 请按顺序 <b>点击 1 → 2 → 3 → 4 → 5</b>，系统沿校园真实道路自动画线。`;
-  el('confirmBtn').disabled=true;el('confirmBtn').textContent='✅ 确认提交（按此路线打卡）';
+  el('mapInfo').innerHTML=`🎯 <b>学校真实点位</b>：${schoolPoints.map((p,i)=>`${i+1}.${p.name}`).join('、')}<br>👆 请按顺序 <b>点击 1 → 2 → 3 → 4 → 5</b>，系统沿校园道路自动画线。`;
+  el('confirmBtn').disabled=true;
   setTimeout(()=>{if(aMap.checkResize)aMap.checkResize();},300);
 }
 
 // === 第三步：用户逐个点击点位，沿路画线 ===
 function tapPoint(idx){
   if(!realPointsReady)return;
-  if(idx!==drawIdx){el('mapInfo').innerHTML=`⚠️ 请先点击 <b>${drawIdx+1} 号点</b>（按 1→2→3→4→5 顺序）。`;return;}
-  if(idx===0&&drawnSegs.length>0){
-    // 闭环：最后连回 1 号
-    finishLoop();return;
-  }
-  if(idx===0&&drawnSegs.length===0){
-    // 开始：点 1 号，进入等待 2 号
-    drawIdx=1;el('mapInfo').innerHTML=`✅ 已选 1 号点（${schoolPoints[0].name}），请点击 2 号点。`;
-    return;
-  }
-  // 画从上一个点到当前点的沿路线段
+  if(idx!==drawIdx){el('mapInfo').innerHTML=`⚠️ 请先点击 <b>${drawIdx+1} 号点（${schoolPoints[drawIdx]?.name||''}）</b>，按顺序来。`;return;}
+  if(idx===0&&drawnSegs.length===0){drawIdx=1;el('mapInfo').innerHTML=`✅ 已选 1 号（${schoolPoints[0].name}），请点击 <b>2 号</b>。`;return;}
+  if(idx===0&&drawnSegs.length>=schoolPoints.length-1){finishLoop();return;}
+  if(idx===drawIdx-1)return;
   drawSegment(idx);
 }
 
 async function drawSegment(toIdx){
-  const from=aMarkers[drawIdx-1].getPosition();
-  const to=aMarkers[toIdx].getPosition();
-  el('mapInfo').textContent=`⏳ 正在规划 ${schoolPoints[drawIdx-1].name} → ${schoolPoints[toIdx].name} 的沿路路线…`;
+  const from=aMarkers[drawIdx-1].getPosition(),to=aMarkers[toIdx].getPosition();
+  el('mapInfo').textContent=`⏳ 正在规划 ${schoolPoints[drawIdx-1].name} → ${schoolPoints[toIdx].name}…`;
   try{
     const url=`https://restapi.amap.com/v3/direction/walking?key=${AMAP_KEY}&origin=${from.lng.toFixed(6)},${from.lat.toFixed(6)}&destination=${to.lng.toFixed(6)},${to.lat.toFixed(6)}`;
     const r=await fetch(url);const d=await r.json();
@@ -161,34 +181,24 @@ async function drawSegment(toIdx){
       const path=d.route.paths[0];segDist=parseInt(path.distance||'0',10);
       path.steps.forEach(s=>{if(s.polyline)s.polyline.split(';').forEach(p=>{const[lng,lat]=p.split(',').map(Number);if(!isNaN(lng))segPts.push([lng,lat]);});});
     }else{segDist=Math.round(from.distance(to));segPts=[[from.lng,from.lat],[to.lng,to.lat]];}
-    drawnSegs.push({pts:segPts,dist:segDist});
-    drawnTotalM+=segDist;
-    drawIdx=toIdx+1;
-    renderPolylines();
-    updateDistBar();
-    if(drawIdx<schoolPoints.length){
-      el('mapInfo').innerHTML=`✅ 已连到 <b>${toIdx+1} 号（${schoolPoints[toIdx].name}）</b>，请继续点击 <b>${toIdx+2} 号</b>。`;
-    }else{
-      el('mapInfo').innerHTML=`✅ 已连完 5 个点！<b>最后请再点 1 号点闭合环路</b>。`;
-    }
+    drawnSegs.push({pts:segPts,dist:segDist});drawnTotalM+=segDist;drawIdx=toIdx+1;
+    renderPolylines();updateDistBar();
+    if(drawIdx<schoolPoints.length)el('mapInfo').innerHTML=`✅ 已连到 <b>${toIdx+1} 号（${schoolPoints[toIdx].name}）</b>，请继续点击 <b>${toIdx+2} 号</b>。`;
+    else el('mapInfo').innerHTML=`✅ 已连完 5 个点！<b>最后请再点 1 号闭合环路</b>。`;
   }catch(e){el('mapInfo').textContent='规划失败，请重试。';}
 }
 
 function finishLoop(){
-  const from=aMarkers[schoolPoints.length-1].getPosition();
-  const to=aMarkers[0].getPosition();
+  const from=aMarkers[schoolPoints.length-1].getPosition(),to=aMarkers[0].getPosition();
   el('mapInfo').textContent='⏳ 正在闭合环路…';
   const url=`https://restapi.amap.com/v3/direction/walking?key=${AMAP_KEY}&origin=${from.lng.toFixed(6)},${from.lat.toFixed(6)}&destination=${to.lng.toFixed(6)},${to.lat.toFixed(6)}`;
   fetch(url).then(r=>r.json()).then(d=>{
     let segPts=[],segDist=0;
-    if(d.status==='1'&&d.route?.paths?.[0]){
-      const path=d.route.paths[0];segDist=parseInt(path.distance||'0',10);
-      path.steps.forEach(s=>{if(s.polyline)s.polyline.split(';').forEach(p=>{const[lng,lat]=p.split(',').map(Number);if(!isNaN(lng))segPts.push([lng,lat]);});});
-    }else{segDist=Math.round(from.distance(to));segPts=[[from.lng,from.lat],[to.lng,to.lat]];}
-    drawnSegs.push({pts:segPts,dist:segDist});
-    drawnTotalM+=segDist;
+    if(d.status==='1'&&d.route?.paths?.[0]){const path=d.route.paths[0];segDist=parseInt(path.distance||'0',10);path.steps.forEach(s=>{if(s.polyline)s.polyline.split(';').forEach(p=>{const[lng,lat]=p.split(',').map(Number);if(!isNaN(lng))segPts.push([lng,lat]);});});}
+    else{segDist=Math.round(from.distance(to));segPts=[[from.lng,from.lat],[to.lng,to.lat]];}
+    drawnSegs.push({pts:segPts,dist:segDist});drawnTotalM+=segDist;
     renderPolylines();updateDistBar();
-    el('mapInfo').innerHTML='🎉 <b>环路闭合！</b>请查看下方距离是否达标。';
+    el('mapInfo').innerHTML='🎉 <b>环路闭合！</b>请检查距离是否达标。';
   }).catch(()=>{el('mapInfo').textContent='闭合失败，请重试。';});
 }
 
@@ -197,63 +207,38 @@ function renderPolylines(){
   const allPts=drawnSegs.flatMap(s=>s.pts);
   if(allPts.length>1)aPolyline=new AMap.Polyline({map:aMap,path:allPts,strokeColor:'#147956',strokeWeight:6,strokeOpacity:.9,lineJoin:'round'});
 }
-
 function updateDistBar(){
-  const km=drawnTotalM/1000;
-  el('drawnDist').textContent=km.toFixed(2);
+  const km=drawnTotalM/1000;el('drawnDist').textContent=km.toFixed(2);
   const bar=el('distBar');
-  if(km>=targetKm){bar.className='dist-bar ok';bar.innerHTML=`✅ 已画 <b>${km.toFixed(2)}</b> km / 目标 <b>${targetKm.toFixed(2)}</b> km — 达标！可以确认提交。`;el('confirmBtn').disabled=false;}
-  else{bar.className='dist-bar warn';bar.innerHTML=`📏 已画 <b>${km.toFixed(2)}</b> km / 目标 <b>${targetKm.toFixed(2)}</b> km — 还差 <b>${(targetKm-km).toFixed(2)}</b> km，请继续画`;el('confirmBtn').disabled=true;}
+  if(km>=targetKm*0.95){bar.className='dist-bar ok';bar.innerHTML=`✅ 已画 <b>${km.toFixed(2)}</b> km / 目标 <b>${targetKm.toFixed(2)}</b> km — 达标！`;el('confirmBtn').disabled=false;}
+  else{bar.className='dist-bar warn';bar.innerHTML=`📏 已画 <b>${km.toFixed(2)}</b> km / 目标 <b>${targetKm.toFixed(2)}</b> km — 还差 <b>${Math.max(0,targetKm-km).toFixed(2)}</b> km`;el('confirmBtn').disabled=true;}
 }
 
-// === 撤销 / 重画 ===
-el('btnUndo').onclick=()=>{
-  if(!drawnSegs.length)return;
-  const last=drawnSegs.pop();drawnTotalM-=last.dist;
-  drawIdx=Math.max(0,drawIdx-1);
-  renderPolylines();updateDistBar();
-  el('mapInfo').innerHTML=`↩ 已撤销，请重新点击 ${drawIdx+1} 号点。`;
-};
-el('btnRedraw').onclick=()=>{
-  drawnSegs=[];drawnTotalM=0;drawIdx=0;
-  renderPolylines();updateDistBar();
-  el('mapInfo').innerHTML='🗑 已清空，请从 1 号点重新开始画。';
-};
-
-// === 全屏 ===
-el('btnToggleExpand').onclick=()=>{
-  const w=el('mapWrap');w.classList.toggle('fullscreen');
-  document.body.style.overflow=w.classList.contains('fullscreen')?'hidden':'';
-  setTimeout(()=>{if(aMap&&aMap.checkResize)aMap.checkResize();},150);
-};
+el('btnUndo').onclick=()=>{if(!drawnSegs.length)return;const last=drawnSegs.pop();drawnTotalM-=last.dist;drawIdx=Math.max(0,drawIdx-1);renderPolylines();updateDistBar();el('mapInfo').innerHTML=`↩ 已撤销，请重新点击 ${drawIdx+1} 号点。`;};
+el('btnRedraw').onclick=()=>{drawnSegs=[];drawnTotalM=0;drawIdx=0;renderPolylines();updateDistBar();el('mapInfo').innerHTML='🗑 已清空，请从 1 号点重新开始。';};
+el('btnToggleExpand').onclick=()=>{const w=el('mapWrap');w.classList.toggle('fullscreen');document.body.style.overflow=w.classList.contains('fullscreen')?'hidden':'';setTimeout(()=>{if(aMap&&aMap.checkResize)aMap.checkResize();},150);};
 el('mapBar').ondblclick=()=>el('btnToggleExpand').click();
 
 // === 第四步：确认提交 ===
 el('confirmBtn').onclick=async()=>{
   if(confirming)return;
   confirming=true;el('confirmBtn').disabled=true;el('confirmBtn').textContent='⏳ 正在提交…';
-  el('statusSection').style.display='block';el('status').textContent='正在按你画的路线提交跑步记录…';
+  el('statusSection').style.display='block';el('status').textContent='正在提交跑步记录…';
   try{
     const r=await fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(fields())});
     const d=await r.json();
     if(r.ok){el('status').textContent='已接受，等待结果…';pollStatus();}
-    else{el('status').textContent='提交失败：'+(d.failure||'未知错误');}
+    else{el('status').textContent='提交失败：'+(d.failure||'未知');}
   }catch(e){el('status').textContent='连接中断。';}
-  finally{confirming=false;el('confirmBtn').disabled=false;el('confirmBtn').textContent='✅ 确认提交（按此路线打卡）';}
+  finally{confirming=false;el('confirmBtn').disabled=false;el('confirmBtn').textContent='✅ 确认提交';}
 };
-
 async function pollStatus(){
   for(let i=0;i<60;i++){
     await new Promise(r=>setTimeout(r,5000));
-    try{
-      const r=await fetch('/api/status',{cache:'no-store'});const d=await r.json();
-      if(!d.busy&&d.report){
-        const p=d.report;
-        el('result').textContent=p.record_uploaded===true?'✅ 提交成功！请打开手机运动世界 App 查看记录。':p.record_uploaded===null?'结果未知，请勿重试。':'❌ 提交未成功。';
-        return;
-      }
+    try{const r=await fetch('/api/status',{cache:'no-store'});const d=await r.json();
+      if(!d.busy&&d.report){const p=d.report;el('result').textContent=p.record_uploaded===true?'✅ 提交成功！请打开手机运动世界 App 查看记录。':p.record_uploaded===null?'结果未知，请勿重试。':'❌ 未成功。';return;}
     }catch{}
   }
-  el('result').textContent='等待超时，请稍后刷新页面查看。';
+  el('result').textContent='等待超时。';
 }
 </script></html>

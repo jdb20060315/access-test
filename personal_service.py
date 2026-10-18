@@ -85,8 +85,8 @@ ACTIVE_KEYS = set()
 READY = False
 COOKIE = 'campus_test_v2'
 PROFILE_TTL = 30 * 86400
-PROFILE_FIELDS = ('username', 'password', 'city', 'latitude', 'longitude',
-                  'distance_km', 'cadence', 'step_length_m')
+PROFILE_FIELDS = ('username', 'password', 'school_name', 'latitude', 'longitude',
+                  'distance_km', 'run_minutes')
 
 
 def settings(require_active=True):
@@ -172,24 +172,25 @@ def parameters(payload, owner):
     if (not isinstance(username, str) or not isinstance(password, str)
             or not 0 < len(password) <= 256 or not re.fullmatch(r'1[3-9][0-9]{9}', username.strip())):
         raise ValueError('account_or_consent_required')
-    anchor = location(payload.get('city'), payload.get('latitude'), payload.get('longitude'))
+    school_name = str(payload.get('school_name') or payload.get('city') or '').strip()
+    if not school_name or len(school_name) < 2:
+        raise ValueError('account_or_consent_required')
+    anchor = location(school_name, payload.get('latitude'), payload.get('longitude'))
     try:
-        distance_km = float(payload.get('distance_km') or 2.26)
-        cadence = float(payload.get('cadence') or 160)
-        step_length_m = float(payload.get('step_length_m') or 1.0)
+        distance_km = float(payload.get('distance_km') or 2.2)
+        run_minutes = float(payload.get('run_minutes') or 15)
     except (TypeError, ValueError):
         raise ValueError('invalid_running_parameters') from None
-    if (not all(math.isfinite(v) for v in (distance_km, cadence, step_length_m))
-            or not 2 <= distance_km <= 3 or not 140 <= cadence <= 200
-            or not 0.7 <= step_length_m <= 1.5):
+    if (not all(math.isfinite(v) for v in (distance_km, run_minutes))
+            or not 2 <= distance_km <= 3 or not 8 <= run_minutes <= 45):
         raise ValueError('invalid_running_parameters')
-    pace_seconds = round(60000 / (cadence * step_length_m))
+    pace_seconds = round(run_minutes * 60 / distance_km)
     if not 150 <= pace_seconds <= 600:
         raise ValueError('invalid_running_parameters')
-    defaults = {'distance_km': '2', 'cadence': '160', 'step_length_m': '1'}
+    defaults = {'distance_km': '2.2', 'run_minutes': '15'}
     fields = {field: payload.get(field, defaults.get(field, '')) for field in PROFILE_FIELDS}
     fields['username'] = username.strip()
-    fields['username'] = username.strip()
+    fields['school_name'] = school_name
     return fields, anchor, distance_km, pace_seconds
 
 
