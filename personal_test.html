@@ -179,8 +179,9 @@ async function drawSegment(toIdx){
   let flng=from.lng||from.getLng(),flat=from.lat||from.getLat();
   let tlng=to.lng||to.getLng(),tlat=to.lat||to.getLat();
   try{
-    const url=`https://restapi.amap.com/v3/direction/walking?key=${AMAP_KEY}&origin=${flng.toFixed(6)},${flat.toFixed(6)}&destination=${tlng.toFixed(6)},${tlat.toFixed(6)}`;
-    const r=await fetch(url);const d=await r.json();
+    const url='/api/walk';
+    const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({origin:flng.toFixed(6)+','+flat.toFixed(6),destination:tlng.toFixed(6)+','+tlat.toFixed(6)})});
+    const d=await r.json();
     if(d.status==='1'&&d.route&&d.route.paths&&d.route.paths[0]&&d.route.paths[0].steps){
       const path=d.route.paths[0];segDist=parseInt(path.distance||'0',10);
       path.steps.forEach(s=>{if(s.polyline)s.polyline.split(';').forEach(p=>{const c=p.split(',').map(Number);if(c.length===2&&!isNaN(c[0])&&!isNaN(c[1]))segPts.push(c);});});
@@ -205,8 +206,7 @@ function finishLoop(){
   el('mapInfo').textContent='⏳ 正在闭合环路…';
   let flng=from.lng||from.getLng(),flat=from.lat||from.getLat();
   let tlng=to.lng||to.getLng(),tlat=to.lat||to.getLat();
-  const url=`https://restapi.amap.com/v3/direction/walking?key=${AMAP_KEY}&origin=${flng.toFixed(6)},${flat.toFixed(6)}&destination=${tlng.toFixed(6)},${tlat.toFixed(6)}`;
-  fetch(url).then(r=>r.json()).then(d=>{
+  fetch('/api/walk',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({origin:flng.toFixed(6)+','+flat.toFixed(6),destination:tlng.toFixed(6)+','+tlat.toFixed(6)})}).then(r=>r.json()).then(d=>{
     let segPts=[],segDist=0;
     if(d.status==='1'&&d.route&&d.route.paths&&d.route.paths[0]&&d.route.paths[0].steps){const path=d.route.paths[0];segDist=parseInt(path.distance||'0',10);path.steps.forEach(s=>{if(s.polyline)s.polyline.split(';').forEach(p=>{const c=p.split(',').map(Number);if(c.length===2&&!isNaN(c[0]))segPts.push(c);});});}
     if(segDist<=0){let straight=0;try{straight=from.distance(to);}catch(e){straight=haversine(flat,flng,tlat,tlng);}segDist=Math.round(straight*1.3);segPts=[[flng,flat],[tlng,tlat]];}

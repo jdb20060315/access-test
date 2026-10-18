@@ -431,6 +431,22 @@ def handle(handler, method):
     if not csrf or not secrets.compare_digest(handler.headers.get('X-CSRF-Token', ''), csrf):
         return send(handler, 403, {'failure': 'session_expired'})
     key = 'browser-run-v2:' + csrf
+    if handler.path == '/api/walk':
+        try:
+            origin = payload.get('origin', '')
+            destination = payload.get('destination', '')
+            if not origin or not destination:
+                return send(handler, 400, {'ok': False, 'failure': 'missing_params'})
+            amap_key = os.environ.get('AMAP_KEY', '8134837038215d9166be3f78afa1de56')
+            url = f'https://restapi.amap.com/v3/direction/walking?key={amap_key}&origin={origin}&destination={destination}'
+            import urllib.request as _ur
+            req = _ur.Request(url, headers={'User-Agent': 'campus-relay/1.0'})
+            with _ur.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode())
+            send(handler, 200, data)
+        except Exception as exc:
+            send(handler, 200, {'status': '0', 'info': str(exc)})
+        return
     if handler.path == '/api/points':
         try:
             fields, anchor, _, _ = parameters(payload, csrf)
