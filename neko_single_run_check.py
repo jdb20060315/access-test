@@ -14,8 +14,10 @@ def meter_summary(output):
     return round(float(match.group(1)) * 1000) if match else None
 
 
-def single_run(root, username, password, runner=subprocess.run, distance_km=2, pace_seconds=390, journal_name='single-run-2km-face0.json'):
+def single_run(root, username, password, runner=subprocess.run, distance_km=2, pace_seconds=390, journal_name='single-run-2km-face0.json', use_road=False):
     arguments = run_arguments(distance_km, pace_seconds)
+    if use_road:
+        arguments += ['--route', 'road']
     if journal_name not in ('single-run-2km-face0.json', 'browser-single-run.json'):
         raise ValueError('invalid_journal')
     root = Path(root)
