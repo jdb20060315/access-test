@@ -97,18 +97,20 @@ async function checkSchoolLocation(){
   if(!name||!lat||!lon||name.length<3){chk.style.display='none';return;}
   chk.style.display='block';chk.className='school-check';chk.textContent='⏳ 正在高德地图上查找学校位置…';
   try{
-    const r=await fetch(`https://restapi.amap.com/v3/geocode/geo?key=${AMAP_KEY}&address=${encodeURIComponent(name)}`);
+    const r=await fetch(`https://restapi.amap.com/v3/place/text?key=${AMAP_KEY}&keywords=${encodeURIComponent(name)}&types=141200&citylimit=false`);
     const d=await r.json();
-    if(d.status==='1'&&d.geocodes&&d.geocodes[0]){
-      const loc=d.geocodes[0].location.split(',').map(Number);
+    if(d.status==='1'&&d.pois&&d.pois.length){
+      const poi=d.pois[0];
+      const loc=poi.location.split(',').map(Number);
       const dist=haversine(lat,lon,loc[1],loc[0]);
-      if(dist<2000){
-        chk.className='school-check ok';chk.textContent=`✅ 学校定位与指南针位置相距 ${Math.round(dist)} 米，匹配。`;
+      const addr=poi.address||poi.pname+poi.cityname;
+      if(dist<3000){
+        chk.className='school-check ok';chk.textContent=`✅ 找到「${poi.name}」（${addr}），与指南针位置相距 ${Math.round(dist)} 米，匹配。`;
       }else{
-        chk.className='school-check warn';chk.textContent=`⚠️ 学校「${name}」与指南针位置相距 ${(dist/1000).toFixed(1)} 公里，可能不在同一个地方，请核对。`;
+        chk.className='school-check warn';chk.textContent=`⚠️ 找到「${poi.name}」（${addr}），但与指南针位置相距 ${(dist/1000).toFixed(1)} 公里。如果你确实在这个学校内，可以忽略此提示继续操作。`;
       }
-    }else{chk.className='school-check warn';chk.textContent='⚠️ 高德未找到该学校，请检查名称是否正确。';}
-  }catch{chk.className='school-check warn';chk.textContent='⚠️ 校验请求失败，可忽略继续。';}
+    }else{chk.className='school-check warn';chk.textContent='⚠️ 高德未找到该学校，请检查名称。不影响提交，可忽略。';}
+  }catch{chk.style.display='none';}
 }
 ['school_name','latitude','longitude'].forEach(id=>el(id).addEventListener('change',()=>setTimeout(checkSchoolLocation,300)));
 
