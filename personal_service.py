@@ -241,8 +241,16 @@ def execute(key, account_key, username, password, anchor, distance_km, pace_seco
             (root / 'nekosportsworldtool').chmod(0o700)
             (root / 'identity.json').write_text(json.dumps(identity), encoding='utf-8')
             osm_src = ROOT / 'school_campus.osm'
-            if osm_src.is_file():
+            has_osm = osm_src.is_file()
+            if has_osm:
                 shutil.copyfile(osm_src, root / 'school_campus.osm')
+            (root / 'config.json').write_text(json.dumps({
+                'username': '', 'password': '', 'remember': False,
+                'dist_min': 2, 'dist_max': 3, 'pace_min': 360, 'pace_max': 420,
+                'update_check': 'off',
+                'osm_path': str(root / 'school_campus.osm') if has_osm else '',
+                'route_mode': 'road' if has_osm else 'legacy'
+            }), encoding='utf-8')
 
             def runner(args, **kwargs):
                 try:
