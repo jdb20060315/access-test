@@ -8,8 +8,10 @@ input,button{box-sizing:border-box;width:100%;padding:12px;font:inherit;border:1
 input[type=checkbox]{width:auto}
 button{background:#147956;color:white;margin-top:16px;cursor:pointer}
 button:disabled{opacity:.5}
-.map-wrap{margin-top:16px;border:1px solid #b6cbc0;border-radius:8px;padding:12px;background:#f8faf9}
+.map-wrap{margin-top:16px;border:1px solid #b6cbc0;border-radius:8px;padding:12px;background:#f8faf9;transition:all .2s ease}
+.map-wrap.fullscreen{position:fixed;top:0;left:0;right:0;bottom:0;width:100vw;height:100vh;max-width:none;margin:0;border-radius:0;z-index:99999;background:white;box-sizing:border-box;padding:14px;display:flex;flex-direction:column}
 .map-box{width:100%;height:320px;border-radius:6px;border:1px solid #ccd9d2;margin-top:8px}
+.map-wrap.fullscreen .map-box{flex:1;height:auto;min-height:0}
 .map-bar{display:flex;justify-content:space-between;align-items:center;gap:8px}
 .map-btn{width:auto;margin:0;padding:6px 12px;font-size:13px;background:#147956;color:white;border-radius:6px}
 .map-tip{font-size:13px;color:#557065;margin:8px 0 0}
@@ -30,13 +32,17 @@ button:disabled{opacity:.5}
 <label for="longitude">指南针东经</label>
 <input id="longitude" inputmode="text" placeholder="例如：126.56 或 107.9308E" required maxlength="48">
 
-<div class="map-wrap">
-  <div class="map-bar">
-    <span style="font-weight:bold;font-size:14px;color:#147956">🗺️ 校园避障路线（高德地图沿路规划）</span>
-    <button class="map-btn" id="btnPlanRoute" type="button">沿道路重新连线</button>
+<div class="map-wrap" id="mapWrap">
+  <div class="map-bar" id="mapBar" title="双击标题栏可放大或收起">
+    <span style="font-weight:bold;font-size:14px;color:#147956">🗺️ 校园避障路线（高德地图）</span>
+    <div style="display:flex;gap:6px">
+      <button class="map-btn" id="btnResetPoints" type="button" style="background:#6c757d">🔄 重置</button>
+      <button class="map-btn" id="btnPlanRoute" type="button">沿路连线</button>
+      <button class="map-btn" id="btnToggleExpand" type="button" style="background:#0d6efd">⛶ 放大</button>
+    </div>
   </div>
-  <div id="amapContainer" class="map-box"></div>
-  <p class="map-tip" id="mapInfo">📍 提示：地图上已标记 5 个点位。你可以<b>拖动任意数字点位</b>到校园水泥路或操场，高德步行导航会<b>自动贴合真实道路连线</b>并更新总距离，彻底避免穿墙。</p>
+  <div id="amapContainer" class="map-box" title="双击地图或点右上角可放大全屏"></div>
+  <p class="map-tip" id="mapInfo">📍 提示：地图已<b>直接放大到最大路网</b>。双击或点右上角【放大】可全屏选点；拖动 5 个数字点，高德会自动沿水泥路连线，绝不穿墙；画错点【🔄 重置】即可重新来。</p>
 </div>
 
 <label for="distance">距离（2–3 km）</label>
@@ -89,8 +95,24 @@ function initMapIfReady(){
   const container=el('amapContainer');if(!container||aMap)return;
   const lat=parseCoord(el('latitude').value)||26.53610,lon=parseCoord(el('longitude').value)||107.9308;
   const [glat,glon]=wgs84ToGcj02(lat,lon);
-  aMap=new AMap.Map('amapContainer',{zoom:16,center:[glon,glat],resizeEnable:true});
+  aMap=new AMap.Map('amapContainer',{zoom:18,center:[glon,glat],resizeEnable:true});
+  aMap.on('dblclick',toggleExpand);
   setupMarkers([glon,glat]);
+}
+function toggleExpand(){
+  const wrap=el('mapWrap'),btn=el('btnToggleExpand');if(!wrap)return;
+  const isFull=wrap.classList.toggle('fullscreen');
+  if(btn)btn.textContent=isFull?'✕ 收起':'⛶ 放大';
+  if(typeof document!=='undefined'&&document.body){document.body.style.overflow=isFull?'hidden':'';}
+  if(aMap){setTimeout(()=>{if(aMap.checkResize)aMap.checkResize();if(aMap.getCenter)aMap.setCenter(aMap.getCenter());},120);}
+}
+function resetPoints(){
+  if(!aMap){initMapIfReady();return;}
+  const lat=parseCoord(el('latitude').value)||26.53610,lon=parseCoord(el('longitude').value)||107.9308;
+  const [glat,glon]=wgs84ToGcj02(lat,lon);
+  aMap.setZoomAndCenter(18,[glon,glat]);
+  setupMarkers([glon,glat]);
+  const infoEl=el('mapInfo');if(infoEl)infoEl.innerHTML='🔄 <b>已重置 5 个点位</b>，正在沿道路重新连线…';
 }
 function setupMarkers(centerLngLat){
   if(!aMap)return;
@@ -129,8 +151,11 @@ async function planWalkingRoute(){
     if(infoEl)infoEl.innerHTML=`✅ <b>道路规划完成</b>：沿真实道路总长 <b>${(totalMeters/1000).toFixed(2)} km</b>，避开建筑物，不穿墙！可继续<b>拖拽任意点位</b>微调。`;
   }catch(e){if(infoEl)infoEl.textContent='高德路径规划请求受限，可点击按钮重试。';}
 }
-function onLocationInputChanged(){const lat=parseCoord(el('latitude').value),lon=parseCoord(el('longitude').value);if(lat&&lon&&aMap){const[glat,glon]=wgs84ToGcj02(lat,lon);aMap.setCenter([glon,glat]);setupMarkers([glon,glat]);}}
+function onLocationInputChanged(){const lat=parseCoord(el('latitude').value),lon=parseCoord(el('longitude').value);if(lat&&lon&&aMap){const[glat,glon]=wgs84ToGcj02(lat,lon);aMap.setZoomAndCenter(18,[glon,glat]);setupMarkers([glon,glat]);}}
 ['latitude','longitude'].forEach(id=>{const elem=el(id);if(elem&&elem.addEventListener)elem.addEventListener('change',onLocationInputChanged);});
 if(el('btnPlanRoute'))el('btnPlanRoute').onclick=()=>{if(!aMap)initMapIfReady();else planWalkingRoute();};
+if(el('btnResetPoints'))el('btnResetPoints').onclick=resetPoints;
+if(el('btnToggleExpand'))el('btnToggleExpand').onclick=toggleExpand;
+if(el('mapBar'))el('mapBar').ondblclick=toggleExpand;
 if(typeof window!=='undefined'){window.addEventListener('load',()=>setTimeout(initMapIfReady,800));}
 </script></html>
