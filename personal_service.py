@@ -378,6 +378,59 @@ def fetch_school_points(username, password, anchor):
             subprocess.run([str(binary), 'logout'], cwd=root, env=env, capture_output=True, timeout=30)
 
 
+def plan_full_route(points):
+    """调高德步行规划 API 把所有相邻点（含闭环）沿真实道路连线，返回完整路线。"""
+    amap_key = os.environ.get('AMAP_KEY', '8134837038215d9166be3f78afa1de56')
+    all_pts = []
+    total_m = 0
+    n = len(points)
+    if n < 2:
+        return {'polyline': [], 'total_m': 0, 'segments': []}
+    import urllib.request as _ur
+    segments = []
+    for i in range(n):
+        p1 = points[i]
+        p2 = points[(i + 1) % n]
+        origin = f"{p1['lng']:.6f},{p1['lat']:.6f}"
+        destination = f"{p2['lng']:.6f},{p2['lat']:.6f}"
+        url = f'https://restapi.amap.com/v3/direction/walking?key={amap_key}&origin={origin}&destination={destination}'
+        seg_pts = [[p1['lng'], p1['lat']], [p2['lng'], p2['lat']]]
+        seg_dist = 0
+        try:
+            req = _ur.Request(url, headers={'User-Agent': 'campus-relay/1.0'})
+            with _ur.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode())
+            if data.get('status') == '1' and data.get('route', {}).get('paths'):
+                path = data['route']['paths'][0]
+                seg_dist = int(path.get('distance', 0))
+                seg_pts = []
+                for step in path.get('steps', []):
+                    pl = step.get('polyline', '')
+                    for pair in pl.split(';'):
+                        c = pair.split(',')
+                        if len(c) == 2:
+                            seg_pts.append([float(c[0]), float(c[1])])
+                if seg_pts[-1] != [p2['lng'], p2['lat']]:
+                    seg_pts.append([p2['lng'], p2['lat']])
+        except Exception:
+            pass
+        if seg_dist <= 0:
+            seg_dist = int(haversine_m(p1['lat'], p1['lng'], p2['lat'], p2['lng']) * 1.3)
+        all_pts.extend(seg_pts)
+        total_m += seg_dist
+        segments.append({'from': p1.get('name', str(i + 1)), 'to': p2.get('name', str((i + 1) % n + 1)), 'dist': seg_dist})
+    return {'polyline': all_pts, 'total_m': total_m, 'segments': segments}
+
+
+def haversine_m(lat1, lon1, lat2, lon2):
+    import math
+    R = 6371000
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat / 2) ** 2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
 def handle(handler, method):
     if method == 'GET':
         if handler.path == '/':
@@ -451,7 +504,8 @@ def handle(handler, method):
         try:
             fields, anchor, _, _ = parameters(payload, csrf)
             pts = fetch_school_points(fields['username'], fields['password'], anchor)
-            return send(handler, 200, {'ok': True, 'points': pts})
+            route = plan_full_route(pts)
+            return send(handler, 200, {'ok': True, 'points': pts, 'route': route})
         except ValueError as exc:
             cat = ('invalid_location' if str(exc) in ('invalid_city', 'invalid_coordinate', 'location_outside_supported_area')
                    else str(exc) if str(exc) in ('device_conflict', 'login_failed', 'points_unavailable')
