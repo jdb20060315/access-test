@@ -1,7 +1,11 @@
 """本人单次测试：不声明人脸通过，保留防重复状态，始终核对退出。
 
-轨迹沿真实道路：先把学校官方点位写入缓存，再用高德步行 API 拉取相邻点位之间的
-真实道路坐标注入缓存，工具拟合环即沿道路走，不再直线穿过建筑物。
+轨迹沿真实道路：
+1. 先把学校官方点位写入缓存
+2. 用高德步行 API 拉取相邻点位之间的真实道路坐标
+3. 道路坐标加密到约 4 米间距（避免拐角被平滑掉）
+4. 重复足够多圈，使路网环长 ≥ 目标距离（避免工具把环拉伸放大而跑进建筑）
+5. 注入缓存，工具拟合环即严格沿道路走
 """
 import json
 import math
@@ -16,11 +20,20 @@ import urllib.request
 from neko_account_check import check, run_arguments
 
 AMAP_KEY = os.environ.get('AMAP_KEY', '8134837038215d9166be3f78afa1de56')
+SPACING_M = 4.0
 
 
 def meter_summary(output):
     match = re.search(r'有效里程：([0-9.]+)\s*km', output)
     return round(float(match.group(1)) * 1000) if match else None
+
+
+def _haversine(lat1, lng1, lat2, lng2):
+    radius = 6371000.0
+    dlat = math.radians(lat2 - lat1)
+    dlng = math.radians(lng2 - lng1)
+    a = math.sin(dlat / 2) ** 2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlng / 2) ** 2
+    return radius * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
 def _gcj02_to_bd09(lat, lng):
@@ -30,9 +43,9 @@ def _gcj02_to_bd09(lat, lng):
     return z * math.sin(theta) + 0.006, z * math.cos(theta) + 0.0065
 
 
-def _amap_walk(olng, olat, dlng, dlat):
+def _amap_walk(origin_lng, origin_lat, dest_lng, dest_lat):
     url = (f'https://restapi.amap.com/v3/direction/walking?key={AMAP_KEY}'
-           f'&origin={olng:.6f},{olat:.6f}&destination={dlng:.6f},{dlat:.6f}')
+           f'&origin={origin_lng:.6f},{origin_lat:.6f}&destination={dest_lng:.6f},{dest_lat:.6f}')
     request = urllib.request.Request(url, headers={'User-Agent': 'campus-relay/1.0'})
     with urllib.request.urlopen(request, timeout=12) as response:
         data = json.loads(response.read().decode())
@@ -42,17 +55,35 @@ def _amap_walk(olng, olat, dlng, dlat):
             for pair in step.get('polyline', '').split(';'):
                 parts = pair.split(',')
                 if len(parts) == 2:
-                    points.append((float(parts[1]), float(parts[0])))
+                    lat, lng = float(parts[1]), float(parts[0])
+                    if not points or _haversine(points[-1][0], points[-1][1], lat, lng) > 0.3:
+                        points.append((lat, lng))
     return points
 
 
-def inject_road_points(binary, root, anchor=None):
-    """用高德沿路坐标丰富点位缓存，让工具的拟合环沿真实道路走。"""
+def _densify(points, spacing=SPACING_M):
+    """把折线加密到约 spacing 米一个点，保持拐角不被平滑掉。"""
+    if len(points) < 2:
+        return list(points)
+    dense = [points[0]]
+    for index in range(1, len(points)):
+        a = dense[-1] if False else points[index - 1]
+        b = points[index]
+        segment = _haversine(a[0], a[1], b[0], b[1])
+        steps = max(1, int(segment / spacing))
+        for step in range(1, steps + 1):
+            ratio = step / steps
+            dense.append((a[0] + (b[0] - a[0]) * ratio, a[1] + (b[1] - a[1]) * ratio))
+    return dense
+
+
+def inject_road_points(binary, root, target_km=2.2):
+    """把高德沿路坐标（加密 + 多圈）注入点位缓存。"""
     root = Path(root)
     cache = root / 'points_cache.json'
     env = dict(os.environ, HOME=str(root), LANG='C.UTF-8')
-    sample = subprocess.run([binary, 'obs-sample', '--dist', '2.0'], cwd=root, env=env,
-                            capture_output=True, text=True, timeout=90)
+    subprocess.run([binary, 'obs-sample', '--dist', '2.0'], cwd=root, env=env,
+                   capture_output=True, text=True, timeout=90)
     if not cache.exists():
         return {'injected': False, 'reason': 'no_cache'}
     try:
@@ -62,33 +93,49 @@ def inject_road_points(binary, root, anchor=None):
     official = doc.get('points') or []
     if len(official) < 2:
         return {'injected': False, 'reason': 'too_few_points'}
-    enriched = []
-    road_total = 0
+
     count = len(official)
+    segment_roads = []
+    loop_length = 0.0
     for index in range(count):
         first = official[index]
         second = official[(index + 1) % count]
-        enriched.append({
-            'lon': first['lon'], 'lat': first['lat'],
-            'isFixed': first.get('isFixed', 0),
-            'pointName': first.get('pointName', ''),
-            'glon': first['glon'], 'glat': first['glat'],
-        })
         try:
             road = _amap_walk(first['glon'], first['glat'], second['glon'], second['glat'])
         except Exception:
-            continue
-        for lat, lng in road[1:-1]:
-            bd_lat, bd_lng = _gcj02_to_bd09(lat, lng)
-            enriched.append({'lon': bd_lng, 'lat': bd_lat, 'isFixed': 0,
-                             'pointName': 'road', 'glon': lng, 'glat': lat})
-            road_total += 1
-    if not road_total:
-        return {'injected': False, 'reason': 'no_road_points'}
+            road = []
+        if len(road) < 2:
+            road = [(first['glat'], first['glon']), (second['glat'], second['glon'])]
+        dense = _densify(road)
+        segment_roads.append(dense)
+        for k in range(1, len(dense)):
+            loop_length += _haversine(dense[k - 1][0], dense[k - 1][1], dense[k][0], dense[k][1])
+
+    if loop_length < 50:
+        return {'injected': False, 'reason': 'loop_too_short'}
+
+    target_m = max(1.0, float(target_km)) * 1000.0
+    repeats = max(1, int(target_m / loop_length) + 1)
+
+    enriched = []
+    for _ in range(repeats):
+        for index in range(count):
+            head = official[index]
+            enriched.append({'lon': head['lon'], 'lat': head['lat'],
+                             'isFixed': head.get('isFixed', 0),
+                             'pointName': head.get('pointName', ''),
+                             'glon': head['glon'], 'glat': head['glat']})
+            for lat, lng in segment_roads[index][1:-1]:
+                bd_lat, bd_lng = _gcj02_to_bd09(lat, lng)
+                enriched.append({'lon': bd_lng, 'lat': bd_lat, 'isFixed': 0,
+                                 'pointName': 'road', 'glon': lng, 'glat': lat})
+
     doc['points'] = enriched
     doc['ts'] = int(time.time() * 1000)
     cache.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding='utf-8')
-    return {'injected': True, 'official': count, 'total': len(enriched), 'road_points': road_total}
+    return {'injected': True, 'official': count, 'total': len(enriched),
+            'loop_m': round(loop_length), 'repeats': repeats,
+            'ring_m': round(loop_length * repeats)}
 
 
 def single_run(root, username, password, runner=subprocess.run, distance_km=2, pace_seconds=390,
@@ -104,7 +151,6 @@ def single_run(root, username, password, runner=subprocess.run, distance_km=2, p
     previous = None
     if journal.exists():
         previous = json.loads(journal.read_text())
-        # 只允许重试上游在提交前明确拒绝的大连默认配置；未知结果和已提交结果始终阻止。
         if previous.get('failure') != 'unconfigured_default_location' or previous.get('location_retry'):
             return {**result, 'failure': 'previous_attempt_requires_review', 'duplicate_prevented': True}
         identity_path = root / 'identity.json'
@@ -132,7 +178,7 @@ def single_run(root, username, password, runner=subprocess.run, distance_km=2, p
         result['record_uploaded'] = None
         try:
             try:
-                result['road_injection'] = inject_road_points(args[0], root)
+                result['road_injection'] = inject_road_points(args[0], root, distance_km)
             except Exception as exc:
                 result['road_injection'] = {'injected': False, 'reason': type(exc).__name__}
             duration_minutes = math.ceil(distance_km * pace_seconds / 60)
