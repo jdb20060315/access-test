@@ -186,7 +186,9 @@ def parameters(payload, owner):
     pace_seconds = round(60000 / (cadence * step_length_m))
     if not 150 <= pace_seconds <= 600:
         raise ValueError('invalid_running_parameters')
-    fields = {field: payload[field] for field in PROFILE_FIELDS}
+    defaults = {'distance_km': '2', 'cadence': '160', 'step_length_m': '1'}
+    fields = {field: payload.get(field, defaults.get(field, '')) for field in PROFILE_FIELDS}
+    fields['username'] = username.strip()
     fields['username'] = username.strip()
     return fields, anchor, distance_km, pace_seconds
 
@@ -438,8 +440,10 @@ def handle(handler, method):
                    else str(exc) if str(exc) in ('device_conflict', 'login_failed', 'points_unavailable')
                    else 'account_or_consent_required')
             return send(handler, 400, {'ok': False, 'failure': cat})
-        except Exception:
-            return send(handler, 500, {'ok': False, 'failure': 'points_fetch_error'})
+        except Exception as exc:
+            import traceback
+            traceback.print_exc()
+            return send(handler, 500, {'ok': False, 'failure': 'points_fetch_error', 'detail': str(exc)})
     if handler.path in ('/api/run', '/api/profile', '/api/diagnose'):
         try:
             if handler.path == '/api/profile' and payload.get('forget') is True:
